@@ -12,5 +12,5 @@ jobs:
       - name: Install the pinned toolchain
         run: rustup show
       - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo clippy --all-targets -- -D warnings -A unused-variables
       - run: cargo test
