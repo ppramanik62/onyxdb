@@ -12,10 +12,10 @@ use std::{error, fmt, result};
 /// back or evicted a page to make room, but every page in the pool is still
 /// correct, and the caller can retry or carry on.
 ///
-/// Page file errors are wrapped in one variant instead of copied out into variants
-/// of their own. The page file already has one variant per rule, with the numbers,
-/// and a copy here would have to change every time that list changed. The pool adds
-/// only the failures it causes itself.
+/// Page file errors all go inside one variant, `PageFile`. We don't copy each one
+/// into a variant of our own. The page file already has one variant per rule, with
+/// the numbers, and a copy here would have to change every time that list changed.
+/// The pool only adds the failures it causes itself.
 ///
 /// # Examples
 ///
@@ -66,7 +66,7 @@ impl fmt::Display for Error {
 
 impl error::Error for Error {}
 
-/// `?` on a page file operation turns its error into ours through this.
+/// This lets `?` on a page file operation turn its error into ours.
 impl From<pagefile::Error> for Error {
     fn from(value: pagefile::Error) -> Self {
         Error::PageFile(value)

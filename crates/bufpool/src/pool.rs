@@ -337,9 +337,9 @@ impl BufPool {
         Ok(())
     }
 
-    /// Gies `frame` to page `n` and loads the page into it. `frame` must be empty
-    /// or hold a clean page with no pins, and the caller passes in the mutex guard
-    /// it checked that under.
+    /// Gives `frame` to page `n` and loads the page into it. `frame` must be empty,
+    /// or hold a clean page with no pins. The caller checks that while it holds the
+    /// mutex, and passes the mutex guard in.
     ///
     /// Returns with the frame pinned once and its exclusive latch held. The mutex
     /// is let go before the read, so other threads can go on working.
@@ -405,8 +405,9 @@ impl BufPool {
         }
     }
 
-    /// True if `frame` still holds page `n`. A thread that waited on the latch
-    /// checks this, because the load it waited for may have failed.
+    /// True if `frame` still holds page `n`. A thread calls this after it waits for
+    /// the frame's latch. While it waited, another thread may have tried to read the
+    /// page into the frame and failed.
     fn holds(&self, frame: usize, n: PageNo) -> bool {
         self.lock().meta[frame].page == Some(n)
     }

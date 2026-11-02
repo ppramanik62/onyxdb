@@ -32,8 +32,8 @@ use pagefile::PageNo;
 ///
 /// - `touch(f, p)` comes on every fetch of page `p`, hit or miss, after the page
 ///   is in frame `f`.
-/// - `forget(f)` comes when frame `f`'s page leaves the pool, before another
-///   page's `touch(f, _)`.
+/// - `forget(f)` comes when frame `f`'s page leaves the pool. It always comes
+///   before the next page's first `touch(f, _)`.
 /// - `victim` is asked only when no frame is empty.
 ///
 /// # Examples
