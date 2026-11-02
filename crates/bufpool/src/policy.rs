@@ -136,7 +136,7 @@ impl Clock {
 }
 
 impl Policy for Clock {
-    fn touch(&mut self, frame: usize, page: PageNo) {
+    fn touch(&mut self, frame: usize, _page: PageNo) {
         self.usage[frame] = (self.usage[frame] + 1).min(MAX_USAGE)
     }
 
