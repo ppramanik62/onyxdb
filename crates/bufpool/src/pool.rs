@@ -333,10 +333,6 @@ impl BufPool {
         }
     }
 
-    fn write_back(&self, _frame: usize) -> Result<()> {
-        Ok(())
-    }
-
     /// Gives `frame` to page `n` and loads the page into it. `frame` must be empty,
     /// or hold a clean page with no pins. The caller checks that while it holds the
     /// mutex, and passes the mutex guard in.
@@ -657,5 +653,77 @@ impl Drop for PageMut<'_> {
     fn drop(&mut self) {
         self.latch = None;
         self.pool.unpin(self.frame);
+    }
+}
+
+impl BufPool {
+    /// Writes the page in `frame` to the file if it's dirty, and marks it clean.
+    /// It does nothing if the page is clean.
+    ///
+    /// The caller has pinned the frame, so the page in it can't change to another
+    /// one. This takes the frame's shared latch, so it waits for a thread that holds
+    /// a [`PageMut`] for the page. It doesn't hold the mutex during the write, and
+    /// it doesn't sync the file.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Log`] if the log hook fails, and [`Error::PageFile`] if the write
+    /// fails. Either way the page stays dirty.
+    pub(crate) fn write_back(&self, frame: usize) -> Result<()> {
+        let latch = self.read_latch(frame);
+        let n = {
+            let state = self.lock();
+            let meta = state.meta[frame];
+            if !meta.dirty {
+                return Ok(());
+            }
+            meta.page.expect("a dirty frame holds a page")
+        };
+        // The write-ahead rule: the log must be durable up to the page's LSN, before
+        // the page reaches the file.
+        self.log.flush_to(latch.lsn()).map_err(Error::Log)?;
+        // Writing sets the checksum, which changes the page, but we hold only a
+        // shared latch. So we write a copy.
+        let mut copy = Page::new(self.page_size);
+        copy.bytes_mut().copy_from_slice(latch.bytes());
+        self.file.write_page(n.get(), &mut copy)?;
+        // Nobody can have changed the page since we read it: that needs the exclusive
+        // latch, and we still hold the shared one.
+        let mut state = self.lock();
+        state.meta[frame].dirty = false;
+        state.stats.writes += 1;
+        Ok(())
+    }
+
+    /// Writes every page that's dirty now, one at a time, while other threads
+    /// go on working. Each page is pinned while it's written, so it can't be
+    /// evicted halfway. A page made dirty after the list is taken may not be
+    /// written. It doesn't sync the file.
+    ///
+    /// # Errors
+    ///
+    /// Stops at the first page that fails to write, and returns that error.
+    /// The pages after it stay dirty.
+    pub(crate) fn write_dirty(&self) -> Result<()> {
+        let dirty: Vec<usize> = {
+            let state = self.lock();
+            (0..self.frames.len())
+                .filter(|&f| state.meta[f].dirty)
+                .collect()
+        };
+        for frame in dirty {
+            {
+                let mut state = self.lock();
+                // It may have been written by an eviction since the list was made.
+                if !state.meta[frame].dirty {
+                    continue;
+                }
+                state.meta[frame].pins += 1;
+            }
+            let written = self.write_back(frame);
+            self.unpin(frame);
+            written?;
+        }
+        Ok(())
     }
 }
