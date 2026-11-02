@@ -47,6 +47,10 @@ pub enum Error {
         /// The number of frames in the pool.
         frames: usize,
     },
+    /// The log hook failed to make the log durable, so a dirty page
+    /// couldn't be written. The page stays dirty in its frame. The inner
+    /// error is the one the hook returned.
+    Log(Box<dyn error::Error + Send + Sync>),
 }
 
 /// The result of every fallible function in this crate.
@@ -60,6 +64,7 @@ impl fmt::Display for Error {
                 f,
                 "no frame is free: all {frames} frames hold a pinned page"
             ),
+            Error::Log(e) => write!(f, "the log couldn't be flushed: {e}"),
         }
     }
 }
