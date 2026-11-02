@@ -58,7 +58,7 @@
 //!   return or a `?`.
 
 use std::{
-    ops::Deref,
+    ops::{Deref, DerefMut},
     sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard},
 };
 
@@ -522,6 +522,138 @@ impl Deref for PageRef<'_> {
 }
 
 impl Drop for PageRef<'_> {
+    fn drop(&mut self) {
+        self.latch = None;
+        self.pool.unpin(self.frame);
+    }
+}
+
+impl BufPool {
+    /// Fetches page `n` for changing, and returns a guard that derefs to the
+    /// [`Page`], mutably.
+    ///
+    /// The page is loaded the same way [`fetch`](Self::fetch) loads it. It's marked
+    /// dirty right away, even if the caller changes nothing, so it's written back
+    /// before its frame is reused.
+    ///
+    /// Marking it at fetch keeps the rule simple: a page held for changing is always
+    /// dirty, and dropping the guard only lets go. The cost is one needless write
+    /// when a caller fetches a page for changing and then changes nothing. The caller
+    /// should set the page's LSN to its log record's LSN before dropping the guard,
+    /// so the write-ahead rule holds when the page is written.
+    ///
+    /// While the guard lives, no other thread can read or change the page.
+    ///
+    /// # Errors
+    ///
+    /// The same as [`fetch`](Self::fetch).
+    ///
+    /// # Deadlocks
+    ///
+    /// Blocks while any other guard for the same page lives, in any thread.
+    /// So a thread that holds a [`PageRef`] or a `PageMut` for page `n` and
+    /// calls `fetch_mut(n)` waits forever.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use bufpool::{BufPool, Clock, NoLog};
+    /// # use pagefile::{PageFile, PageNo, PageStore, freelist};
+    /// # use vfs::Mem;
+    /// # let mem = Mem::new();
+    /// # let mut file = PageFile::create(&mem, "db", 512).unwrap();
+    /// # for _ in 0..3 {
+    /// #     let n = freelist::allocate(&mut file).unwrap();
+    /// #     file.write(n, &mut file.new_page()).unwrap();
+    /// # }
+    /// // A page file with pages 1 to 3, and a pool of 2 frames in front of it.
+    /// let pool = BufPool::new(file, 2, Box::new(Clock::new(2)), Box::new(NoLog));
+    /// let one = PageNo::new(1).unwrap();
+    /// let mut page = pool.fetch_mut(one).unwrap();
+    /// page.set_lsn(9);
+    /// drop(page);
+    ///
+    /// // The change is in the pool now, and in the file once it's written back.
+    /// assert_eq!(pool.fetch(one).unwrap().lsn(), 9);
+    /// ```
+    pub fn fetch_mut(&self, n: PageNo) -> Result<PageMut<'_>> {
+        loop {
+            let (frame, claimed) = self.pin(n, true)?;
+            let latch = match claimed {
+                Some(latch) => latch,
+                None => self.write_latch(frame),
+            };
+            if self.mark_dirty(frame, n) {
+                return Ok(PageMut {
+                    pool: self,
+                    frame,
+                    page: n,
+                    latch: Some(latch),
+                });
+            }
+            drop(latch);
+            self.unpin(frame);
+        }
+    }
+
+    /// Marks `frame` dirty and returns true, if the frame still holds page `n`.
+    /// If it doesn't, it returns false. That can happen when another thread was
+    /// reading page `n` into the frame and the read failed. The frame was emptied
+    /// while this thread waited for its latch.
+    ///
+    /// The caller holds the frame's exclusive latch. So a write-back, which holds
+    /// the shared latch, can't be running, and it can't clear the flag just after
+    /// it's set.
+    pub(crate) fn mark_dirty(&self, frame: usize, n: PageNo) -> bool {
+        let mut state = self.lock();
+        let meta = &mut state.meta[frame];
+        if meta.page != Some(n) {
+            return false;
+        }
+        meta.dirty = true;
+        true
+    }
+}
+
+/// A page fetched for changing with [`BufPool::fetch_mut`]. It derefs to the
+/// [`Page`], mutably.
+///
+/// While it lives, it holds one pin on the page's frame and the frame's exclusive
+/// latch, so no other thread can read or change the page. The page was marked dirty
+/// when the guard was made. Dropping it lets go of the latch, then the pin.
+pub struct PageMut<'a> {
+    /// The pool the page is in.
+    pub(crate) pool: &'a BufPool,
+    /// The frame that holds the page.
+    pub(crate) frame: usize,
+    /// The page's number.
+    pub(crate) page: PageNo,
+    /// The frame's exclusive latch, an `Option` for the same reason as in `PageRef`.
+    pub(crate) latch: Option<RwLockWriteGuard<'a, Page>>,
+}
+
+impl PageMut<'_> {
+    /// The number of the page this guard holds.
+    pub fn number(&self) -> PageNo {
+        self.page
+    }
+}
+
+impl Deref for PageMut<'_> {
+    type Target = Page;
+
+    fn deref(&self) -> &Self::Target {
+        self.latch.as_ref().expect("the latch is held until drop")
+    }
+}
+
+impl DerefMut for PageMut<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.latch.as_mut().expect("the latch is held until drop")
+    }
+}
+
+impl Drop for PageMut<'_> {
     fn drop(&mut self) {
         self.latch = None;
         self.pool.unpin(self.frame);

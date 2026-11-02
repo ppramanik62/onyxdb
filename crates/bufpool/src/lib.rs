@@ -10,5 +10,5 @@ pub mod table;
 pub use error::{Error, Result};
 pub use log::{LogHook, NoLog};
 pub use policy::{Clock, Policy};
-pub use pool::{BufPool, PageRef, Stats};
+pub use pool::{BufPool, PageMut, PageRef, Stats};
 pub use table::PageTable;
