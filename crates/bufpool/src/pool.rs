@@ -423,7 +423,7 @@ impl BufPool {
     /// - [`Error::AllPinned`] if the page has to be loaded and every frame holds
     ///   a pinned page already.
     /// - [`Error::PageFile`] if reading the page fails or its checksum is wrong,
-    /// or if writing back the evicted page fails.
+    ///   or if writing back the evicted page fails.
     /// - [`Error::Log`] if the log can't be made durable before that write.
     ///
     /// # Deadlocks
