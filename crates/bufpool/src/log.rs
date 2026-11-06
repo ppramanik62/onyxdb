@@ -59,7 +59,7 @@ pub trait LogHook: Send + Sync {
     /// write the page, and returns the error as `Error::Log`.
     ///
     /// The error is a `Box<dyn Error>` because the pool doesn't know what kind of
-    /// log is behind the book, so it can't name its error type. It only passes
+    /// log is behind the hook, so it can't name its error type. It only passes
     /// the error on.
     fn flush_to(&self, lsn: u64) -> Result<(), Box<dyn error::Error + Send + Sync>>;
 }
