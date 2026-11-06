@@ -2,7 +2,7 @@
 
 onyxdb is a SQL database built to learn how databases work inside. It covers what a real database must do: store data in its own format, survive crashes, cache pages, index, run SQL, isolate transactions, and serve many clients. Where there's a choice, it takes the simplest design that's still correct. Speed comes second.
 
-`vfs`, `pagefile` and `bufpool` are done. Everything else here is the plan. As each crate is built, its README describes how it actually works.
+This file is the final design. It's built in milestones, each a version you can run (see [Milestones](#milestones)). `vfs`, `pagefile` and `bufpool` are done. As each crate is built, its README describes how it actually works.
 
 ## Principles
 
@@ -34,7 +34,7 @@ onyxdb is a SQL database built to learn how databases work inside. It covers wha
 
 `onyxdb` sits on top: the binary that owns the data directory, picks the engine, recovers, and starts the server.
 
-## Build order
+## Dependencies
 
 ```mermaid
 flowchart LR
@@ -55,12 +55,19 @@ flowchart LR
   lsm --> onyxdb
 ```
 
-| Builds | What works afterwards |
-|---|---|
-| 1–4 `vfs` `pagefile` `bufpool` `wal` | pages on disk, cached, with a crash-safe log |
-| 5–10 `kv` `mvcc` `sql` `wire` `server` `client` | the whole database, end to end, on the in-memory model engine |
-| 11–12 `btree` `lsm` | real storage under the same SQL |
-| 13 `onyxdb` | one binary, crash-tested end to end |
+## Milestones
+
+Each milestone is a version you can run. It builds only the parts of each crate it needs, and the next milestone goes deeper. A crate gets its final interface in its first part, so later parts add to it without changing its types.
+
+| Milestone | What works afterwards | Parts built |
+|---|---|---|
+| M0 | pages on disk, cached and checksummed | `vfs`, `pagefile`, `bufpool` |
+| M1 `v0.1` | a key-value store on a B-tree that survives `kill -9`, with a command line | `wal` (records, sync, replay), `kv`, `btree` (insert, delete, crash safety), `onyxdb` (data directory, recovery) |
+| M2 `v0.2` | SQL in a shell, one table per query, transactions taking turns | `mvcc` (versioned keys, snapshots), `sql` (parser, tables as keys, operators), `client` (the shell) |
+| M3 `v0.3` | the shell and your programs over the network | `wire`, `server` (sessions, login), `client` (the library) |
+| M4 `v0.4` | many clients at once, every isolation level correct | `wal` (group commit, fuzzy checkpoints), `btree` (B-link), `mvcc` (locks, SI, SSI, intents, GC), `server` (thread pool, schema locks) |
+| M5 `v0.5` | indexes, joins, queries bigger than memory, the optimizer | `sql` (indexes, joins, spilling, statistics, prepared statements), `wire` and `client` (prepared statements) |
+| M6 `v1.0` | a second engine, and the whole design proven | `lsm`, `onyxdb` (engine choice, integrity check, backup, `kill -9` under load, benchmarks) |
 
 ## The data directory
 
@@ -70,10 +77,10 @@ data/
   onyxdb.conf       engine, port, memory budget
   btree/            when the B-tree engine was chosen
     data.pf           the page file
-    wal.log           page images of committed batches
+    wal/              page images of committed batches, in segment files
   lsm/              when the LSM engine was chosen
     MANIFEST          which tables make up the tree
-    wal.log           batches not yet flushed to a table
+    wal/              batches not yet flushed to a table
     000012.sst ...    sorted tables
 ```
 
@@ -157,19 +164,23 @@ sequenceDiagram
 
 ## 4. Write-ahead log: `wal`
 
-An append-only file of records. An LSN is a record's byte position, so it only grows.
+An append-only stream of records, cut into 32 KiB blocks and stored in segment files named by the LSN they start at. A record's LSN is the byte position just past it, so LSNs only grow, and 0 means "never logged".
 
 ```text
+wal/0000000000000000.wal   0000000000040000.wal   ...
+     [block][block]...          [block][block]...
+
 block (32 KiB)
-┌───────────────────────────────────────────────────────┐
-│ [len | type | crc | payload] [len | type | crc | ...]  │
-└───────────────────────────────────────────────────────┘
-types: whole · first · middle · last   (a record may span blocks)
+┌──────────────────────────────────────────────────────────┐
+│ [crc | len | type | data] [crc | len | type | data] ...   │
+└──────────────────────────────────────────────────────────┘
+types: full · first · middle · last   (a record may span blocks and segments)
 ```
 
-- **Commit** appends records and calls `sync`. **Group commit** lets every writer waiting at that moment share one `sync`.
-- **Replay** reads from the last checkpoint and stops cleanly at a torn record at the end.
-- **Fuzzy checkpoints** record where replay can start, without stopping writers. The log before that point is deleted.
+- **Append** writes a record. **`flush_to(lsn)`** syncs, so every record up to that LSN is durable. **Group commit** lets every writer waiting at that moment share one sync.
+- **After a failed write or sync**, the log refuses everything until it's reopened. Opening cuts the torn tail and rewrites the last segment, so nothing it replays can still be lost.
+- **Replay** returns every durable record, oldest first, and stops cleanly at a torn record at the end.
+- **Fuzzy checkpoints** note where replay can start, without stopping writers. Whole segments before that point are deleted.
 
 ## 5. The storage contract: `kv`
 
@@ -200,7 +211,7 @@ A B+tree on slotted pages. Leaves hold keys and values, and are linked left to r
                                        └──▶ overflow chain for a long value
 ```
 
-**A committed batch.** Pages change in frames. The log gets a full image of every changed page, then a commit record.
+**A committed batch.** Pages change in frames. The log gets one record holding a full image of every changed page. A record is whole or missing after a crash, so the record is the commit.
 
 ```mermaid
 sequenceDiagram
@@ -210,13 +221,13 @@ sequenceDiagram
   participant W as wal
   M->>B: apply(batch)
   B->>P: change pages in frames (leaves, splits, header, freelist)
-  B->>W: append image of each changed page, then COMMIT
+  B->>W: append one record: the image of each changed page
   W->>W: sync (shared by group commit)
   W-->>M: committed
   Note over P: dirty pages reach data.pf later, after their log records
 ```
 
-**Recovery.** Replay page images of committed batches from the last checkpoint, in order, over `data.pf`. A batch with no commit record is ignored. Full images also repair a page that was torn mid-write. No undo is needed here: unfinished transactions are undone a layer up, in `mvcc`.
+**Recovery.** Replay the records from the last checkpoint, in order, writing their page images over `data.pf`. A record cut short by a crash is never replayed. Full images also repair a page that was torn mid-write. No undo is needed here: unfinished transactions are undone a layer up, in `mvcc`.
 
 **Concurrency.** B-link right pointers: a reader that lands on a node mid-split follows the right link instead of restarting.
 
@@ -225,7 +236,7 @@ sequenceDiagram
 Writes go to memory first and are merged into sorted files in the background.
 
 ```text
-write ──▶ wal.log ──▶ memtable (skip list)
+write ──▶ wal ──▶ memtable (skip list)
                          │ full
                          ▼ flush
           L0  [sst] [sst]            may overlap
@@ -328,6 +339,7 @@ sequenceDiagram
 - One session per connection, holding that connection's transaction state. A bounded thread pool refuses work it can't take.
 - Idle and query timeouts, cancel, and a shutdown that rolls back open transactions and flushes.
 - The client library retries only what can't have committed. The REPL works like the `sqlite3` shell.
+- The REPL runs on a `Session` trait that `client` defines: a network session in `client`, and an embedded one in `onyxdb`, so the same shell works with or without a server.
 
 ## 11. The binary: `onyxdb`
 
@@ -377,7 +389,7 @@ sequenceDiagram
 | Layer | What it guarantees | How |
 |---|---|---|
 | `pagefile` | a damaged page is never trusted | CRC-32C on every page |
-| `btree` | a batch survives whole or not at all | page images + commit record in `wal`, synced before the reply |
+| `btree` | a batch survives whole or not at all | one record of page images per batch in `wal`, synced before the reply |
 | `lsm` | the same | batch in `wal` before the memtable, and the MANIFEST replaced atomically |
 | `mvcc` | a transaction commits whole or not at all | one atomic batch, or intents plus a transaction record |
 | `onyxdb` | one process owns the data | an exclusive lock on `data/LOCK` |
