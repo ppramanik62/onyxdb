@@ -13,7 +13,7 @@ Each crate has a README with its design, its format and the decisions behind it.
 | [`vfs`](crates/vfs) | file I/O behind a trait: the real disk, or a file system in memory that can crash, tear writes and fail `fsync`. Also file locks | 1 | done |
 | [`pagefile`](crates/pagefile) | a file of fixed-size, checksummed pages: slotted pages, a freelist and overflow chains | 2 | done |
 | [`bufpool`](crates/bufpool) | a buffer pool: frames, eviction, the write-ahead rule, latches | 3 | done |
-| `wal` | a write-ahead log: replay, group commit, checkpoints | 4, 18 | planned |
+| `wal` | a write-ahead log: replay, group commit, checkpoints | 4, 18 | in progress |
 | `kv` | the ordered key-value trait, an in-memory model engine and a shared test suite | 5 | planned |
 | `btree` | a B+tree engine, crash-safe through page images in the log | 6, 7, 8, 19 | planned |
 | `onyxdb` | the binary: owns the data directory, recovers and serves clients. Also integrity checks and backups | 9, 30, 31 | planned |
@@ -29,7 +29,7 @@ The database is built in milestones, each a version you can run. [ARCHITECTURE.m
 | Milestone | You can | State |
 |---|---|---|
 | M0 | read and write cached, checksummed pages | done |
-| M1 `v0.1` | put, get, delete and scan keys in a store that survives `kill -9` | next |
+| M1 `v0.1` | put, get, delete and scan keys in a store that survives `kill -9` | in progress |
 | M2 `v0.2` | run SQL in a shell | planned |
 | M3 `v0.3` | connect over the network | planned |
 | M4 `v0.4` | run many clients at once | planned |
