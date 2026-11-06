@@ -2,7 +2,7 @@
 
 onyxdb is a SQL database built to learn how databases work inside. It covers what a real database must do: store data in its own format, survive crashes, cache pages, index, run SQL, isolate transactions, and serve many clients. Where there's a choice, it takes the simplest design that's still correct. Speed comes second.
 
-`vfs` and `pagefile` are done, and `bufpool` is in progress. Everything else here is the plan. As each crate is built, its README describes how it actually works.
+`vfs`, `pagefile` and `bufpool` are done. Everything else here is the plan. As each crate is built, its README describes how it actually works.
 
 ## Principles
 
@@ -142,7 +142,7 @@ page table (own hash table)        frames
 
 - **Eviction** picks an unpinned frame, behind a trait: CLOCK, then LRU-K, which a sequential scan can't flush.
 - **The write-ahead rule.** A dirty page may reach the file only after the log is on disk up to its LSN. The pool asks through a hook trait it defines, and the B-tree plugs `wal` into it.
-- **Latches** protect frames for the few instructions of a read or write. None is held during I/O.
+- **Latches.** Each frame has a reader-writer latch, held by the guard a fetch returns until it's dropped. One mutex covers the page table, the pins and the policy, and it's never held during I/O.
 
 ```mermaid
 sequenceDiagram
