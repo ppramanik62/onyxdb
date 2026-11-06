@@ -8,23 +8,33 @@ The references behind each layer are in [database-papers](https://github.com/PPR
 
 Each crate has a README with its design, its format and the decisions behind it. [ARCHITECTURE.md](ARCHITECTURE.md) shows how they fit together.
 
-| Build | Crate | What it is | State |
+| Crate | What it is | Books | State |
 |---|---|---|---|
-| 1 | [`vfs`](crates/vfs) | file I/O behind a trait: the real disk, or a file system in memory that can crash, tear writes and fail `fsync`. Also file locks | done |
-| 2 | [`pagefile`](crates/pagefile) | a file of fixed-size, checksummed pages: slotted pages, a freelist and overflow chains | done |
-| 3 | [`bufpool`](crates/bufpool) | a buffer pool: frames, eviction, the write-ahead rule, latches | done |
-| 4 | `wal` | a write-ahead log: group commit, replay, checkpoints | planned |
-| 5 | `kv` | the ordered key-value trait, an in-memory model engine and a shared test suite | planned |
-| 6 | `mvcc` | transactions: snapshots, a lock manager, deadlocks, serializable isolation with phantoms | planned |
-| 7 | `sql` | parser, catalog, schema locks, prepared statements, planner and executor | planned |
-| 8 | `wire` | the client-server protocol | planned |
-| 9 | `server` | sessions over TCP, many clients at once | planned |
-| 10 | `client` | a client library and a REPL | planned |
-| 11 | `btree` | a B+tree engine, crash-safe through page images in the log | planned |
-| 12 | `lsm` | a log-structured merge tree engine | planned |
-| 13 | `onyxdb` | the binary: owns the data directory, recovers and serves clients. Also integrity checks and backups | planned |
+| [`vfs`](crates/vfs) | file I/O behind a trait: the real disk, or a file system in memory that can crash, tear writes and fail `fsync`. Also file locks | 1 | done |
+| [`pagefile`](crates/pagefile) | a file of fixed-size, checksummed pages: slotted pages, a freelist and overflow chains | 2 | done |
+| [`bufpool`](crates/bufpool) | a buffer pool: frames, eviction, the write-ahead rule, latches | 3 | done |
+| `wal` | a write-ahead log: replay, group commit, checkpoints | 4, 18 | planned |
+| `kv` | the ordered key-value trait, an in-memory model engine and a shared test suite | 5 | planned |
+| `btree` | a B+tree engine, crash-safe through page images in the log | 6, 7, 8, 19 | planned |
+| `onyxdb` | the binary: owns the data directory, recovers and serves clients. Also integrity checks and backups | 9, 30, 31 | planned |
+| `mvcc` | transactions: snapshots, a lock manager, deadlocks, serializable isolation with phantoms | 10, 20, 21 | planned |
+| `sql` | parser, catalog, schema locks, prepared statements, planner and executor | 11–13, 23–27 | planned |
+| `client` | a client library and a REPL | 14, 17, 27 | planned |
+| `wire` | the client-server protocol | 15, 27 | planned |
+| `server` | sessions over TCP, many clients at once | 16, 22 | planned |
+| `lsm` | a log-structured merge tree engine | 28, 29 | planned |
 
-By build 10 the whole stack runs on the in-memory model engine. Builds 11 and 12 put real engines underneath.
+The database is built in milestones, each a version you can run. [ARCHITECTURE.md](ARCHITECTURE.md#milestones) lists them.
+
+| Milestone | You can | State |
+|---|---|---|
+| M0 | read and write cached, checksummed pages | done |
+| M1 `v0.1` | put, get, delete and scan keys in a store that survives `kill -9` | next |
+| M2 `v0.2` | run SQL in a shell | planned |
+| M3 `v0.3` | connect over the network | planned |
+| M4 `v0.4` | run many clients at once | planned |
+| M5 `v0.5` | run indexes, joins and optimized queries | planned |
+| M6 `v1.0` | choose between two engines, all of it proven | planned |
 
 ## Build and test
 
