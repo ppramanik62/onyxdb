@@ -45,7 +45,11 @@
 pub type Lsn = u64;
 
 pub mod crc;
+mod error;
 pub mod format;
 pub mod segment;
+pub mod wal;
 
+pub use error::{Error, Result};
 pub use format::{BLOCK, HEADER};
+pub use wal::Wal;
