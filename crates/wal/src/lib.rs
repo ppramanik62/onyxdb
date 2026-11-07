@@ -46,5 +46,6 @@ pub type Lsn = u64;
 
 pub mod crc;
 pub mod format;
+pub mod segment;
 
 pub use format::{BLOCK, HEADER};
