@@ -288,4 +288,4 @@ it opens and checks: 340 crashes, 204 failed
 
 The failures are expected. Each change writes two pages, a crash can keep either one, and nothing here makes them change together. That's the write-ahead log's job, so the same workload should pass once a log sits underneath.
 
-The references behind this crate are in [database-papers/2-pagefile](https://github.com/PPRAMANIK62/database-papers/tree/main/2-pagefile).
+The references behind this crate are in [database-papers/2-pagefile](https://github.com/PPRAMANIK62/database-papers/tree/main/database-references/2-pagefile).
