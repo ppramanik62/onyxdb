@@ -2,7 +2,7 @@
 
 A SQL database written from scratch in Rust, standard library only. SQLite-like SQL, crash-safe storage, transactions, and many clients over its own protocol.
 
-The references behind each layer are in [database-papers](https://github.com/PPRAMANIK62/database-papers).
+The references behind each layer are in [engineering-notes](https://github.com/PPRAMANIK62/engineering-notes).
 
 ## Crates
 

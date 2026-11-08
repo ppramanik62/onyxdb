@@ -170,4 +170,4 @@ cargo bench -p bufpool
 
 `benches/pool.rs` prints fetches per second for hits and misses, with 1 and 8 threads. Save your first run to `benches/baseline.txt` and compare later runs against it.
 
-The references behind this crate are in [database-papers/3-bufpool](https://github.com/PPRAMANIK62/database-papers/tree/main/database-references/3-bufpool).
+The references behind this crate are in [engineering-notes](https://github.com/PPRAMANIK62/engineering-notes/blob/main/database-references/README.md#buffer-manager).

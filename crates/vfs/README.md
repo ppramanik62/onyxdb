@@ -135,4 +135,4 @@ cargo run -p vfs --example replace      why sync_dir matters
 cargo run -p vfs --example torn         a torn sector, seed by seed
 ```
 
-The references behind this crate are in [database-papers/1-vfs](https://github.com/PPRAMANIK62/database-papers/tree/main/database-references/1-vfs).
+The references behind this crate are in [engineering-notes](https://github.com/PPRAMANIK62/engineering-notes/blob/main/database-references/README.md#virtual-file-system).
