@@ -314,7 +314,30 @@ fn cut_tail(vfs: &dyn Vfs, dir: &Path, segments: &mut Vec<Lsn>, end: Lsn) -> Res
     Ok(file)
 }
 
-fn rewrite_tail(_file: &dyn File, _len: u64) -> Result<()> {
+/// Writes the first `len` bytes of `file` again, unchanged, so that the
+/// sync after it puts them on disk.
+///
+/// This fixes a problem with failed syncs on Linux. After a sync fails,
+/// Linux keeps the writes it could not save in its page cache, but it marks
+/// them as saved. A read of the file still returns those bytes, so `open`
+/// counts them as records. No later sync writes them to disk, because Linux
+/// thinks they are already there. Then the log appends new records after
+/// them and syncs. A crash can now keep the new records and lose the old
+/// bytes. Replay stops at that hole and never reaches the new records, even
+/// though they were synced. Writing the old bytes again marks them as
+/// changed, so the next sync saves them.
+///
+/// Only the current segment needs this. Every earlier segment was synced as
+/// a whole before the next one was created. A failed sync stops the log, so
+/// it cannot create a new segment after one.
+///
+/// It costs up to one segment of writes every time the log is opened. It is
+/// safe if a crash tears the write, because each byte is either the old
+/// value or the new one, and they are the same.
+fn rewrite_tail(file: &dyn File, len: u64) -> Result<()> {
+    let mut bytes = vec![0; len as usize];
+    file.read_at(&mut bytes, 0)?;
+    file.write_at(&bytes, 0)?;
     Ok(())
 }
 
