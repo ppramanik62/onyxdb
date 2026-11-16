@@ -42,7 +42,7 @@ fn pinned_pages_stay() {
         pool.fetch(no(4)),
         Err(Error::AllPinned { frames: 3 })
     ));
-    // Unpin page 2. It's the only page that can go, so page 4 takes its frame.
+    // Unpin page 2. It is the only page that can go, so page 4 takes its frame.
     drop(two);
     let four = pool.fetch(no(4)).unwrap();
     assert_eq!(four.u32_at(STAMP), 4);
@@ -54,13 +54,14 @@ fn pinned_pages_stay() {
 fn a_damaged_page_is_caught_on_load() {
     let mem = Mem::new();
     let pool = pool(&mem, 3, 1);
-    // Change one byte of page 2 in the file, behind the pool's back.
+    // Change one byte of page 2 in the file directly, without the pool.
     let file = mem.open(Path::new("test.pf"), Open::Existing).unwrap();
     file.write_at(&[0xff], 2 * 512 + 100).unwrap();
     assert!(matches!(
         pool.fetch(no(2)),
         Err(Error::PageFile(pagefile::Error::Checksum { page: 2, .. }))
     ));
-    // The frame went back to the empty list, so this one-frame pool still works.
+    // The frame went back to the empty list, so this one-frame pool still
+    // works.
     assert_eq!(pool.fetch(no(3)).unwrap().u32_at(STAMP), 3);
 }

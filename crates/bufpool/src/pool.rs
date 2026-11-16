@@ -6,29 +6,31 @@
 //! | frame | One page-sized buffer. Frames are numbered from 0 and never move. |
 //! | pin | A count of the guards and threads using a frame. A frame with pins is never emptied. |
 //! | latch | A frame's `RwLock`. Shared to read the page, exclusive to change it. |
-//! | guard | A [`PageRef`] or [`PageMut`]. It holds one pin and the latch until it's dropped. |
+//! | guard | A [`PageRef`] or [`PageMut`]. It holds one pin and the latch until it is dropped. |
 //! | dirty | The page in the frame changed since it was read or last written. |
 //! | claim | Give an empty or evicted frame to a new page and load the page into it. |
 //! | write back | Write a dirty page to the file, after the log hook says the log is durable. |
 //!
-//! A caller fetches a page by number and gets a guard. While the guard lives, the
-//! frame is pinned, so the page stays, and latched, so no other thread changes
-//! it underneath. A `PageRef` holds a shared latch, and a `PageMut` an exclusive one.
+//! A caller fetches a page by number and gets a guard. Until the guard is
+//! dropped, the frame is pinned, so the page stays in it, and latched, so no
+//! other thread can change the page while the caller uses it. A `PageRef`
+//! holds a shared latch, and a `PageMut` holds an exclusive one.
 //!
-//! | page table | frames |
-//! | --- | --- |
-//! | page 7, frame 2 | frame 0: page 3, pins 0, clean |
-//! | page 3, frame 0 | frame 1: empty |
-//! | | frame 2: page 7, pins 1, dirty |
+//! ```text
+//! page table             frames
+//! page 7 → frame 2       frame 0: page 3, pins 0, clean
+//! page 3 → frame 0       frame 1: empty
+//!                        frame 2: page 7, pins 1, dirty
+//! ```
 //!
-//! A fetch of page 7 here is a hit: it pins frame 2 and takes its latch.
-//! A fetch of page 5 is a miss: it takes the empty frame 1 and reads page 5 into it.
-//! Once no frame is empty, the policy picks a frame with no pins, and that frame's
-//! page is written back first if it's dirty.
+//! A fetch of page 7 here is a hit: it pins frame 2 and takes its latch. A
+//! fetch of page 5 is a miss. It takes the empty frame 1 and reads page 5
+//! into it. When no frame is empty, the policy picks a frame with no pins.
+//! If that frame's page is dirty, the pool writes it back first.
 //!
 //! Three rules keep this safe with many threads:
 //!
-//! 1. A page is used only through a guard. A guard lets go of its latch
+//! 1. A page is used only through a guard. A guard releases its latch
 //!    before its pin.
 //! 2. Pins and dirty flags change only under the pool's mutex. A page's bytes
 //!    change only under its exclusive latch, and the dirty flag is set while
@@ -36,26 +38,28 @@
 //! 3. No thread waits for I/O while it holds the mutex. The only latch held
 //!    during I/O is the latch of the frame being read or written.
 //!
-//! Why it's built this way:
+//! Why it is built this way:
 //!
-//! - One mutex covers the page table, the pins, the dirty flags and the policy,
-//!   because a fetch changes all of them together. With one mutex, a fetch sees
-//!   them to agree. Every step under it is a few memory reads and writes, so
-//!   threads wait on it only briefly.
-//! - Each frame's bytes have their own latch instead, because work on a page can
-//!   take long: a caller holds a guard while it reads or changes the page. One
-//!   latch per frame lets threads work on different pages at the same time, and
-//!   lets many threads read one page at once.
-//! - A pin and a latch are separate because they protect different things. The
-//!   pin keeps the page in its frame. The latch keeps the bytes from changing under a reader.
-//!   A thread that waits for a latch already holds a pin, so the page can't be
-//!   evicted while it waits.
-//! - I/O is never done under the mutex, because a disk read takes thousands of
-//!   times longer than the work mutex protects. If one miss held the mutex, every
-//!   other fetch, even a hit, would wait for that disk read.
-//! - Pages are used only through guards, so the pin and the latch are let go
-//!   when the guard is dropped. A caller can't forget to unpin, even on an early
-//!   return or a `?`.
+//! - One mutex protects the page table, the pins, the dirty flags and the
+//!   policy, because a fetch changes all of them together. With one mutex,
+//!   a fetch always sees them in a state that agrees. Each step under the
+//!   mutex is a few reads and writes of memory, so threads wait for it only
+//!   a short time.
+//! - The bytes of each frame have their own latch, because work on a page
+//!   can take a long time: a caller holds a guard while it reads or changes
+//!   the page. One latch per frame lets threads work on different pages at
+//!   the same time, and lets many threads read one page at the same time.
+//! - A pin and a latch are separate because they protect different things.
+//!   The pin keeps the page in its frame. The latch keeps the bytes from
+//!   changing. A thread that waits for a latch already holds a pin, so the
+//!   page cannot be evicted while it waits.
+//! - No I/O happens under the mutex, because a disk read takes thousands of
+//!   times longer than the work the mutex protects. If one miss held the
+//!   mutex during its read, every other fetch, even a hit, would wait for
+//!   that read.
+//! - Pages are used only through guards, and dropping a guard releases its
+//!   pin and its latch. So a caller cannot forget to unpin, even when it
+//!   returns early or uses `?`.
 
 use std::{
     ops::{Deref, DerefMut},
@@ -68,14 +72,16 @@ use crate::{Error, LogHook, PageTable, Policy, Result};
 
 /// A buffer pool in front of one page file.
 ///
-/// It holds a fixed number of frames, each with room for one page. Pages are read
-/// into frames on demand and stay there until the policy evicts them.
-/// It's `Send` and `Sync`, so threads share it by reference, for example with
-/// `std::thread::scope`.
+/// It holds a fixed number of frames, each with room for one page. A page is
+/// read into a frame the first time it is fetched, and it stays there until
+/// the policy evicts it.
+/// It is `Send` and `Sync`, so threads share it by reference, for example
+/// with `std::thread::scope`.
 ///
-/// The pool takes the [`PageFile`] by value, so every read and write of the file
-/// goes through the pool. Don't open the same file again elsewhere while the pool
-/// is in front of it, or the two copies of each page drift apart.
+/// The pool takes the [`PageFile`] by value, so every read and write of the
+/// file goes through the pool. Do not open the same file again elsewhere
+/// while the pool is in front of it. Otherwise each page would have two
+/// copies, and they would stop matching.
 ///
 /// # Examples
 ///
@@ -104,37 +110,39 @@ use crate::{Error, LogHook, PageTable, Policy, Result};
 pub struct BufPool {
     /// The page file behind the pool. Only the pool reads and writes it.
     pub(crate) file: PageFile,
-    /// The size of every page in bytes.
+    /// The size of every page, in bytes.
     pub(crate) page_size: usize,
     /// One page per frame. Each lock is that frame's latch.
     frames: Vec<RwLock<Page>>,
     /// Everything about the frames except their bytes, behind one mutex.
     state: Mutex<State>,
-    /// The pool's copy of the header, with its own latch. It's never evicted.
+    /// The pool's copy of the header, with its own latch. It is never evicted.
     ///
-    /// It isn't kept in a frame because it's read on every allocation and free,
-    /// so it would never be a good victim anyway. Kept apart, it never takes a
-    /// frame from the pages, and it's a decoded `Header`, not bytes that every
-    /// reader would have to decode again.
+    /// It is not kept in a frame. It is read on every allocation and every
+    /// free, so the policy would never choose it as a victim anyway. Kept
+    /// outside the frames, it never uses a frame that a page could use. It is
+    /// also stored as a decoded `Header`, so no reader has to decode its
+    /// bytes again.
     pub(crate) header: RwLock<Header>,
     /// Called before a page is written, to keep the write-ahead rule.
     pub(crate) log: Box<dyn LogHook>,
 }
 
-/// Everything the pool's mutex protects: which page is in which frame, the pins
-/// and dirty flags, and the policy. A frame's bytes aren't in here. They're behind
-/// the frame's own latch.
+/// Everything the pool's mutex protects: which page is in which frame, the
+/// pins and dirty flags, and the policy. A frame's bytes are not in here.
+/// They are behind the frame's own latch.
 pub(crate) struct State {
     /// Which frame holds each page in the pool.
     table: PageTable<usize>,
     /// One entry per frame.
     meta: Vec<Meta>,
-    /// Frames that hold no page. They're used before the policy is asked.
+    /// Frames that hold no page. They are used before the policy is asked.
     empty: Vec<usize>,
-    /// Picks which frame to empty when the pool needs room.
+    /// Picks the frame to empty when there is no empty one.
     policy: Box<dyn Policy>,
-    /// The counts that `stats` returns.
+    /// Counts of what the pool has done.
     stats: Stats,
+    /// True if the header changed since it was last written.
     pub(crate) header_dirty: bool,
 }
 
@@ -144,7 +152,7 @@ struct Meta {
     /// The page in the frame, or `None` for an empty frame.
     page: Option<PageNo>,
     /// How many guards, and threads in the middle of an operation, hold the
-    /// frame. The frame is emptied only when this hits 0.
+    /// frame. The frame is emptied only when this is 0.
     pins: u32,
     /// True if the page changed since it was read or last written.
     dirty: bool,
@@ -161,8 +169,8 @@ impl Meta {
 
 /// Counts of what the pool has done since it was made.
 ///
-/// A fetch is either a hit or a miss. A miss that had to empty a frame that held
-/// another page also counts an eviction.
+/// A fetch is either a hit or a miss. A miss that had to empty a frame
+/// that held another page also counts an eviction.
 ///
 /// # Examples
 ///
@@ -181,27 +189,29 @@ pub struct Stats {
     /// Pages removed from a frame to make room for another.
     pub evictions: u64,
     /// Pages written to the file, by eviction or by flushing. The header
-    /// isn't counted.
+    /// is not counted.
     pub writes: u64,
 }
 
 impl Stats {
-    /// Hits as a share of all fetches, from 0 to 1. It's 0 when there have been
-    /// no fetches.
+    /// Hits as a share of all fetches, from 0 to 1. It is 0 when there have
+    /// been no fetches.
     pub fn hit_rate(&self) -> f64 {
         self.hits as f64 / (self.hits + self.misses).max(1) as f64
     }
 }
 
 impl BufPool {
-    /// Makes a pool of `frames` frames in front of `file`. Every frame starts
-    /// empty.
+    /// Makes a pool of `frames` frames in front of `file`. Every frame
+    /// starts empty.
     ///
-    /// `policy` picks the frames to empty, and must be made for the same number
-    /// of frames. `log` is called before any page write, to keep the write-ahead
-    /// rule. The pool copies the file's header and keeps its own copy from then on.
+    /// `policy` picks the frames to empty, and must be made for the same
+    /// number of frames. `log` is called before every page write, to keep
+    /// the write-ahead rule. The pool copies the file's header and keeps
+    /// its own copy from then on.
     ///
-    /// This allocates all the frames, `frames` times the page size, up front.
+    /// This allocates the memory for all the frames, `frames` times the page
+    /// size, when the pool is made.
     ///
     /// # Panics
     ///
@@ -224,7 +234,7 @@ impl BufPool {
             state: Mutex::new(State {
                 table: PageTable::new(frames),
                 meta: vec![Meta::EMPTY; frames],
-                // Reversed, so that `pop` hands out frame 0 first.
+                // Reversed, so that `pop` returns frame 0 first.
                 empty: (0..frames).rev().collect(),
                 policy,
                 stats: Stats::default(),
@@ -235,19 +245,19 @@ impl BufPool {
         }
     }
 
-    /// A copy of the pool's counts so far. The counts keep changing after this
-    /// returns.
+    /// A copy of the pool's counts so far. The counts keep changing after
+    /// this returns.
     pub fn stats(&self) -> Stats {
         self.lock().stats
     }
 
-    /// Takes the pool's mutex. Callers keep it only for quick work on the state,
-    /// never while they wait for I/O or for a latch.
+    /// Takes the pool's mutex. Callers keep it only for quick work on the
+    /// state, never while they wait for I/O or for a latch.
     ///
     /// # Panics
     ///
-    /// Panics if a thread panicked while it held the mutex, because the pins and
-    /// the page table may then be wrong.
+    /// Panics if a thread panicked while it held the mutex, because the
+    /// pins and the page table may then be wrong.
     pub(crate) fn lock(&self) -> MutexGuard<'_, State> {
         self.state
             .lock()
@@ -271,24 +281,24 @@ impl BufPool {
     }
 }
 
-/// What `pin` returns: the frame's index, and the frame's exclusive latch, if
-/// this thread just claimed the frame for its page. A frame that already held
-/// the page comes with no latch, and the caller takes the one it needs.
+/// What `pin` returns: the frame's index, and the frame's exclusive latch
+/// if this thread just claimed the frame for its page. A frame that already
+/// held the page comes with no latch, and the caller takes the one it needs.
 ///
-/// The `'a` ties the latch to the pool it came from, so the latch can't outlive
-/// the pool.
+/// The `'a` ties the latch to the pool it came from, so the compiler does not
+/// allow the latch to exist after the pool is dropped.
 pub(crate) type Pinned<'a> = (usize, Option<RwLockWriteGuard<'a, Page>>);
 
 impl BufPool {
-    /// Pins the frame that holds page `n`. If the page isn't in the pool, it
-    /// claims the frame for it first: an empty one if there is one, or else
-    /// the policy's victim, written back first if it's dirty.
+    /// Pins the frame that holds page `n`. If the page is not in the pool, it
+    /// claims a frame for it first: an empty one if there is one, or else
+    /// the policy's victim, written back first if it is dirty.
     ///
     /// With `read` false, a claimed frame is zeroed instead of read from the
     /// file, for a caller that will overwrite the whole page.
     ///
-    /// The caller must call `unpin` once when it's done with the frame, and
-    /// must let go of the latch, if it got one, before that.
+    /// The caller must call `unpin` once when it is done with the frame. If
+    /// it got a latch, it must release the latch before it calls `unpin`.
     ///
     /// # Errors
     ///
@@ -314,16 +324,18 @@ impl BufPool {
                 }
             };
             if state.meta[frame].dirty {
-                // Write the victim back first, without the mutex. Our pin keeps
-                // any other thread from choosing it meanwhile.
+                // Write the victim back first, without the mutex. The pin
+                // taken here stops other threads from choosing the same
+                // victim during the write.
                 state.meta[frame].pins += 1;
                 drop(state);
                 let written = self.write_back(frame);
                 state = self.lock();
                 state.meta[frame].pins -= 1;
                 written?;
-                // While the mutex was free, another thread may have pinned or
-                // changed the victim, or loaded page `n` itself. If so, start over.
+                // While the mutex was released, another thread may have
+                // pinned or changed the victim, or loaded page `n` itself. If
+                // so, try again from the start.
                 let meta = state.meta[frame];
                 if meta.pins > 0 || meta.dirty || state.table.get(n).is_some() {
                     continue;
@@ -332,18 +344,18 @@ impl BufPool {
             return self.claim(state, frame, n, read);
         }
     }
-
-    /// Gives `frame` to page `n` and loads the page into it. `frame` must be empty,
-    /// or hold a clean page with no pins. The caller checks that while it holds the
-    /// mutex, and passes the mutex guard in.
+    /// Gives `frame` to page `n` and loads the page into it. `frame` must be
+    /// empty, or hold a clean page with no pins. The caller checks that
+    /// while it holds the mutex, and passes the mutex guard in.
     ///
-    /// Returns with the frame pinned once and its exclusive latch held. The mutex
-    /// is let go before the read, so other threads can go on working.
+    /// Returns with the frame pinned once and its exclusive latch held. It
+    /// releases the mutex before the read, so other threads can use the pool
+    /// during the read.
     ///
     /// # Errors
     ///
-    /// Any error from reading the page. The frame is then emptied, and it goes back
-    /// on the empty list once its last pin is gone.
+    /// Any error from reading the page. The frame is then emptied, and it
+    /// goes back on the empty list once its last pin is gone.
     fn claim(
         &self,
         mut state: MutexGuard<'_, State>,
@@ -364,14 +376,16 @@ impl BufPool {
         state.table.insert(n, frame);
         state.policy.touch(frame, n);
         state.stats.misses += 1;
-        // A latch is only held inside a guard, and a guard holds a pin. The frame
-        // had no pins, so nobody holds its latch and this never waits.
+        // A latch is only held inside a guard, and a guard holds a pin. The
+        // frame had no pins, so no thread holds its latch, and this call
+        // never waits.
         let mut latch = self.frames[frame]
             .try_write()
             .expect("a frame with no pins has no latch holders");
-        // Other threads that want page `n` now find it in the table, pin the frame,
-        // and wait on the latch until the page is loaded. So a page that many
-        // thread miss at once is read from the file only once.
+        // Other threads that want page `n` now find it in the table. They
+        // pin the frame and wait for the latch until the page is loaded. So
+        // when many threads miss the same page at the same time, the page is
+        // read from the file only once.
         drop(state);
         if !read {
             latch.bytes_mut().fill(0);
@@ -388,49 +402,53 @@ impl BufPool {
         Ok((frame, Some(latch)))
     }
 
-    /// Takes away one pin from `frame`. The caller must hold a pin on it and must
-    /// have let go of the frame's latch first.
+    /// Removes one pin from `frame`. The caller must hold a pin on it, and
+    /// must have released the frame's latch first.
     pub(crate) fn unpin(&self, frame: usize) {
         let mut state = self.lock();
         let meta = &mut state.meta[frame];
         meta.pins -= 1;
-        // A frame that failed to load holds no page. The last thread to let go
-        // of it puts it back on the empty list.
+        // A frame whose load failed holds no page. The last thread to unpin
+        // it puts it back on the empty list.
         if meta.pins == 0 && meta.page.is_none() {
             state.empty.push(frame);
         }
     }
 
-    /// True if `frame` still holds page `n`. A thread calls this after it waits for
-    /// the frame's latch. While it waited, another thread may have tried to read the
-    /// page into the frame and failed.
+    /// True if `frame` still holds page `n`. A thread calls this after it
+    /// waits for the frame's latch. While it waited, another thread may have
+    /// tried to read the page into the frame and failed.
     fn holds(&self, frame: usize, n: PageNo) -> bool {
         self.lock().meta[frame].page == Some(n)
     }
-
     /// Fetches page `n` for reading, and returns a guard that derefs to the
     /// [`Page`].
     ///
-    /// If the page isn't in the pool, it's read from the file and its checksum
-    /// is checked. If no frame is empty, the policy picks a frame with no pins
-    /// to reuse, and that frame's page is written back first if it's dirty.
+    /// If the page is not in the pool, it is read from the file and its
+    /// checksum is checked. If no frame is empty, the policy picks a frame
+    /// with no pins to reuse, and that frame's page is written back first
+    /// if it is dirty.
     ///
-    /// While the guard lives, the page stays in its frame. Other threads can read
-    /// the page at the same time, but no thread can change it.
+    /// Until the guard is dropped, the page stays in its frame. Other
+    /// threads can read the page at the same time, but no thread can change
+    /// it.
+    ///
+    /// The pool does not check `n` against the header's page count. A page
+    /// past the end of the file fails when it is read.
     ///
     /// # Errors
     ///
-    /// - [`Error::AllPinned`] if the page has to be loaded and every frame holds
-    ///   a pinned page already.
-    /// - [`Error::PageFile`] if reading the page fails or its checksum is wrong,
-    ///   or if writing back the evicted page fails.
-    /// - [`Error::Log`] if the log can't be made durable before that write.
+    /// - [`Error::AllPinned`] if the page has to be loaded and every frame
+    ///   holds a pinned page.
+    /// - [`Error::PageFile`] if reading the page fails or its checksum is
+    ///   wrong, or if writing back the evicted page fails.
+    /// - [`Error::Log`] if the log cannot be made durable before that write.
     ///
     /// # Deadlocks
     ///
-    /// Blocks while another thread holds a [`PageMut`] for the same page. So a
-    /// thread that holds a `PageMut` for page `n` and calls `fetch(n)` waits
-    /// forever.
+    /// Blocks while another thread holds a [`PageMut`] for the same page.
+    /// So a thread that holds a `PageMut` for page `n` and calls `fetch(n)`
+    /// waits forever.
     ///
     /// # Examples
     ///
@@ -467,7 +485,7 @@ impl BufPool {
     pub fn fetch(&self, n: PageNo) -> Result<PageRef<'_>> {
         loop {
             let (frame, claimed) = self.pin(n, true)?;
-            // A frame we just claimed comes with its own exclusive latch. Trade
+            // A frame we just claimed comes with its exclusive latch. Trade
             // it for a shared one, like every other reader.
             drop(claimed);
             let latch = self.read_latch(frame);
@@ -485,11 +503,12 @@ impl BufPool {
     }
 }
 
-/// A page fetched for reading with [`BufPool::fetch`]. It derefs to the [`Page`].
+/// A page fetched for reading with [`BufPool::fetch`]. It derefs to the
+/// [`Page`].
 ///
-/// While it lives, it holds one pin on the page's frame, so the page isn't evicted,
-/// and the frame's shared latch, so no thread can change the page. Dropping it
-/// lets go of the latch, then the pin.
+/// It holds one pin on the page's frame, so the page is not evicted, and the
+/// frame's shared latch, so no thread can change the page. Dropping it
+/// releases the latch, then the pin.
 pub struct PageRef<'a> {
     /// The pool the page is in.
     pool: &'a BufPool,
@@ -497,8 +516,8 @@ pub struct PageRef<'a> {
     frame: usize,
     /// The page's number.
     page: PageNo,
-    /// The frame's shared latch. It's an `Option` only so that `drop` can let go
-    /// of it before the pin. It's `Some` until then.
+    /// The frame's shared latch. It is an `Option` only so that `drop` can
+    /// release it before the pin. It is `Some` until then.
     latch: Option<RwLockReadGuard<'a, Page>>,
 }
 
@@ -526,19 +545,23 @@ impl Drop for PageRef<'_> {
 
 impl BufPool {
     /// Fetches page `n` for changing, and returns a guard that derefs to the
-    /// [`Page`], mutably.
+    /// [`Page`], mutably too.
     ///
-    /// The page is loaded the same way [`fetch`](Self::fetch) loads it. It's marked
-    /// dirty right away, even if the caller changes nothing, so it's written back
-    /// before its frame is reused.
+    /// The page is loaded the same way [`fetch`](Self::fetch) loads it. It is
+    /// marked dirty immediately, even if the caller changes nothing, so it is
+    /// written back before its frame is reused.
     ///
-    /// Marking it at fetch keeps the rule simple: a page held for changing is always
-    /// dirty, and dropping the guard only lets go. The cost is one needless write
-    /// when a caller fetches a page for changing and then changes nothing. The caller
-    /// should set the page's LSN to its log record's LSN before dropping the guard,
-    /// so the write-ahead rule holds when the page is written.
+    /// Marking it dirty at fetch keeps the rule simple: a page held for
+    /// changing is always dirty, and dropping the guard only releases the
+    /// latch and the pin. The cost is one write that was not needed when a
+    /// caller fetches a page for changing and then changes nothing.
     ///
-    /// While the guard lives, no other thread can read or change the page.
+    /// The caller should set the page's LSN to its log record's LSN before
+    /// it drops the guard. Then the write-ahead rule holds when the page is
+    /// written.
+    ///
+    /// Until the guard is dropped, no other thread can read or change the
+    /// page.
     ///
     /// # Errors
     ///
@@ -592,14 +615,14 @@ impl BufPool {
         }
     }
 
-    /// Marks `frame` dirty and returns true, if the frame still holds page `n`.
-    /// If it doesn't, it returns false. That can happen when another thread was
-    /// reading page `n` into the frame and the read failed. The frame was emptied
-    /// while this thread waited for its latch.
+    /// Marks `frame` dirty and returns true, if the frame still holds page
+    /// `n`. If it does not, it returns false. This happens when another
+    /// thread was reading page `n` into the frame and the read failed: the
+    /// frame was emptied while this thread waited for its latch.
     ///
-    /// The caller holds the frame's exclusive latch. So a write-back, which holds
-    /// the shared latch, can't be running, and it can't clear the flag just after
-    /// it's set.
+    /// The caller holds the frame's exclusive latch. A write-back holds the
+    /// shared latch, so no write-back can be running now. So no write-back
+    /// can clear the dirty flag just after this call sets it.
     pub(crate) fn mark_dirty(&self, frame: usize, n: PageNo) -> bool {
         let mut state = self.lock();
         let meta = &mut state.meta[frame];
@@ -611,12 +634,13 @@ impl BufPool {
     }
 }
 
-/// A page fetched for changing with [`BufPool::fetch_mut`]. It derefs to the
-/// [`Page`], mutably.
+/// A page fetched for changing with [`BufPool::fetch_mut`]. It derefs to
+/// the [`Page`], mutably too.
 ///
-/// While it lives, it holds one pin on the page's frame and the frame's exclusive
-/// latch, so no other thread can read or change the page. The page was marked dirty
-/// when the guard was made. Dropping it lets go of the latch, then the pin.
+/// It holds one pin on the page's frame and the frame's exclusive latch, so
+/// no other thread can read or change the page. The page was marked dirty
+/// when the guard was made. Dropping the guard releases the latch, then the
+/// pin.
 pub struct PageMut<'a> {
     /// The pool the page is in.
     pub(crate) pool: &'a BufPool,
@@ -624,7 +648,8 @@ pub struct PageMut<'a> {
     pub(crate) frame: usize,
     /// The page's number.
     pub(crate) page: PageNo,
-    /// The frame's exclusive latch, an `Option` for the same reason as in `PageRef`.
+    /// The frame's exclusive latch, an `Option` for the same reason as in
+    /// `PageRef`.
     pub(crate) latch: Option<RwLockWriteGuard<'a, Page>>,
 }
 
@@ -657,18 +682,18 @@ impl Drop for PageMut<'_> {
 }
 
 impl BufPool {
-    /// Writes the page in `frame` to the file if it's dirty, and marks it clean.
-    /// It does nothing if the page is clean.
+    /// Writes the page in `frame` to the file if it is dirty, and marks it
+    /// clean. It does nothing if the page is clean.
     ///
-    /// The caller has pinned the frame, so the page in it can't change to another
-    /// one. This takes the frame's shared latch, so it waits for a thread that holds
-    /// a [`PageMut`] for the page. It doesn't hold the mutex during the write, and
-    /// it doesn't sync the file.
+    /// The caller has pinned the frame, so the frame cannot be given to
+    /// another page. This takes the frame's shared latch, so it waits while
+    /// another thread holds a [`PageMut`] for the page. It does not hold the
+    /// mutex during the write, and it does not sync the file.
     ///
     /// # Errors
     ///
-    /// [`Error::Log`] if the log hook fails, and [`Error::PageFile`] if the write
-    /// fails. Either way the page stays dirty.
+    /// [`Error::Log`] if the log hook fails, and [`Error::PageFile`] if the
+    /// write fails. Either way the page stays dirty.
     pub(crate) fn write_back(&self, frame: usize) -> Result<()> {
         let latch = self.read_latch(frame);
         let n = {
@@ -679,26 +704,29 @@ impl BufPool {
             }
             meta.page.expect("a dirty frame holds a page")
         };
-        // The write-ahead rule: the log must be durable up to the page's LSN, before
-        // the page reaches the file.
+        // The write-ahead rule: the log must be durable up to the page's LSN
+        // before the page reaches the file.
         self.log.flush_to(latch.lsn()).map_err(Error::Log)?;
-        // Writing sets the checksum, which changes the page, but we hold only a
-        // shared latch. So we write a copy.
+        // Writing a page sets its checksum, which changes the page. This
+        // thread holds only a shared latch, so it must not change the page.
+        // So it writes a copy.
         let mut copy = Page::new(self.page_size);
         copy.bytes_mut().copy_from_slice(latch.bytes());
         self.file.write_page(n.get(), &mut copy)?;
-        // Nobody can have changed the page since we read it: that needs the exclusive
-        // latch, and we still hold the shared one.
+        // No thread can have changed the page since this thread copied it:
+        // a change needs the exclusive latch, and this thread still holds the
+        // shared one.
         let mut state = self.lock();
         state.meta[frame].dirty = false;
         state.stats.writes += 1;
         Ok(())
     }
 
-    /// Writes every page that's dirty now, one at a time, while other threads
-    /// go on working. Each page is pinned while it's written, so it can't be
-    /// evicted halfway. A page made dirty after the list is taken may not be
-    /// written. It doesn't sync the file.
+    /// Writes every page that is dirty now, one at a time. Other threads can
+    /// use the pool during the writes. Each page is pinned while it is
+    /// written, so it cannot be evicted during its write. A page that becomes
+    /// dirty after the list is made may not be written. It does not sync the
+    /// file.
     ///
     /// # Errors
     ///
@@ -714,7 +742,8 @@ impl BufPool {
         for frame in dirty {
             {
                 let mut state = self.lock();
-                // It may have been written by an eviction since the list was made.
+                // An eviction may have written the page back since the list
+                // was made.
                 if !state.meta[frame].dirty {
                     continue;
                 }

@@ -1,4 +1,4 @@
-//! Changed pages: written back when they're evicted, and never before the log.
+//! Changed pages: written back when they are evicted, and never before the log.
 
 mod common;
 
@@ -33,7 +33,7 @@ fn a_clean_page_is_never_written() {
     assert_eq!(pool.stats().writes, 0);
 }
 
-/// A log that says it's durable up to some LSN, and fails every third
+/// A log that says it is durable up to some LSN, and fails every third
 /// flush. `durable` is the highest LSN it reported durable.
 struct FlakyLog {
     durable: Arc<AtomicU64>,
@@ -69,7 +69,8 @@ fn no_page_reaches_the_file_before_its_log() {
         let mut lsn = 0;
         for _ in 0..500 {
             let n = no(1 + rng.below(30) as u32);
-            // A failed log flush stops the eviction it was for. That's fine here.
+            // A failed log flush stops the eviction it was for. That is fine
+            // here.
             let result = if rng.below(2) == 0 {
                 lsn += 1;
                 pool.fetch_mut(n).map(|mut page| page.set_lsn(lsn))

@@ -1,19 +1,20 @@
 //! The header, `flush`, and `PageStore` on top of the pool.
 //!
-//! The pool keeps its own copy of the header, which counts new pages and
-//! tracks the freelist before the header on disk does. It's never evicted.
-//! `flush` writes the dirty pages and then the header, so the file on disk
-//! is complete and consistent once it returns.
+//! The pool keeps its own copy of the header, and it never evicts it. New
+//! pages and freelist changes are counted in this copy first, before the
+//! header on disk. `flush` writes the dirty pages and then the header, so
+//! when it returns, the file on disk is complete and consistent.
 //!
-//! The pool's header is kept apart from the file's for two reasons. Writing
-//! the header to the file on every allocation would cost a write each time.
-//! And the header on disk must never count a page the file doesn't have
-//! yet. So the pool counts new pages in memory, and `flush` writes the
-//! header last, once the pages it counts are in the file.
+//! The pool's copy of the header is separate from the file's for two
+//! reasons. First, writing the header to the file on every allocation would
+//! cost one write per allocation. Second, the header on disk must never
+//! count a page that the file does not have yet. So the pool counts new
+//! pages in memory, and `flush` writes the header last, after the pages it
+//! counts are in the file.
 //!
 //! `PageStore` is implemented for `&BufPool`. So the freelist and overflow
-//! chains from `pagefile` work through the pool, and every page they
-//! change, the header too, changes in memory first.
+//! functions from `pagefile` work through the pool. Every page they change,
+//! and the header too, is changed in memory first.
 //!
 //! ```text
 //! freelist::allocate(&mut &pool)
@@ -86,7 +87,7 @@ impl BufPool {
         )
     }
 
-    /// The pool's copy of the header, for changing. It's marked dirty at
+    /// The pool's copy of the header, for changing. It is marked dirty at
     /// once, and the next [`flush`](Self::flush) writes it.
     ///
     /// # Deadlocks
@@ -147,20 +148,21 @@ impl DerefMut for HeaderMut<'_> {
 impl BufPool {
     /// Makes the file on disk hold every change made through the pool so far.
     ///
-    /// It writes every page that's dirty when it starts and syncs the file.
+    /// It writes every page that is dirty when it starts, and syncs the file.
     /// Then, if the header changed, it writes the header and syncs again.
-    /// Pages go first, so a crash in the middle never leaves a header that
-    /// counts pages the file doesn't have.
+    /// The pages are written first, so a crash during `flush` never leaves a
+    /// header that counts pages the file does not have.
     ///
-    /// Other threads go on working meanwhile, and pages stay in their
-    /// frames. A page or header held for changing is written once its guard
-    /// is dropped, so flushing waits for those guards.
+    /// Other threads can use the pool during `flush`, and pages stay in
+    /// their frames. A page or header that another thread holds for changing
+    /// is written after that thread drops its guard, so `flush` waits for
+    /// those guards.
     ///
     /// # Errors
     ///
-    /// [`Error::Log`] if the log can't be made durable, and
-    /// [`Error::PageFile`] if a write or a sync fails. Pages that weren't
-    /// written stay dirty, and calling `flush` again, tries them again.
+    /// [`Error::Log`] if the log cannot be made durable, and
+    /// [`Error::PageFile`] if a write or a sync fails. Pages that were not
+    /// written stay dirty, and calling `flush` again tries them again.
     ///
     /// # Deadlocks
     ///
@@ -191,8 +193,9 @@ impl BufPool {
     /// assert_eq!(pool.stats().writes, 1);
     /// ```
     pub fn flush(&self) -> Result<()> {
-        // Copy the header first. Every page it counts is then either in the
-        // file or dirty in a frame, so the pages written next include them all.
+        // Copy the header first. Every page that this copy counts is already
+        // in the file or dirty in a frame. So the dirty pages written next
+        // include every page the copy counts.
         let copy = {
             let header = self.header();
             self.lock().header_dirty.then(|| header.clone())
@@ -209,18 +212,18 @@ impl BufPool {
         copy.encode(&mut page);
         self.file.write_page(0, &mut page)?;
         self.file.sync()?;
-        // The header is clean only if nobody changed it after the copy.
+        // The header is clean only if no thread changed it after the copy.
         let header = self.header();
         if *header == copy {
             self.lock().header_dirty = false;
         }
         Ok(())
     }
-
     /// Fetches page `n` for changing without reading it from the file. If
-    /// it isn't in the pool, it starts as zeros. It's for a caller that
-    /// replaces the whole page, such as `PageStore::write`, and it saves a
-    /// read. Errors and deadlocks are the same as for `fetch_mut`.
+    /// the page is not in the pool, its frame starts as zeros. It is for a
+    /// caller that replaces the whole page, such as `PageStore::write`, and
+    /// it saves one read. Errors and deadlocks are the same as for
+    /// `fetch_mut`.
     fn overwrite(&self, n: PageNo) -> Result<PageMut<'_>> {
         loop {
             let (frame, claimed) = self.pin(n, false)?;
@@ -240,16 +243,17 @@ impl BufPool {
             self.unpin(frame);
         }
     }
-
     /// Checks that page `n` is below the page count in the pool's header.
     ///
-    /// `PageStore` promises this check, and the freelist depends on it: it
-    /// raises the page count before it writes a new page. So a page at or
-    /// past the count was never allocated. Reading one means a damaged link,
-    /// and writing one would grow the file behind the header's back.
+    /// `PageStore` promises this check, and the freelist depends on it. The
+    /// freelist raises the page count before it writes a new page, so a page
+    /// at or past the count was never allocated. Reading such a page means a
+    /// link is damaged. Writing one would make the file longer without the
+    /// header counting the new page.
     ///
-    /// `fetch` doesn't do this check. Most callers already know the page
-    /// exists, and the check would make every fetch take the header's latch.
+    /// `fetch` does not do this check. Most callers already know that the
+    /// page exists, and the check would make every fetch take the header's
+    /// latch.
     ///
     /// # Errors
     ///
@@ -272,36 +276,40 @@ impl BufPool {
 /// `pagefile` work through the frames instead of the file.
 ///
 /// The pool needs this because those functions change pages and the
-/// header. If they wrote to the file directly, a page could be changed in
-/// the file while an older copy sat dirty in a frame. The next write-back
-/// would then put the old copy over the new one. A direct write would also
-/// skip the log hook and break the write-ahead rule. Going through
-/// `PageStore` keeps one copy of every page, in the pool, and every write
-/// to the file goes through the hook.
+/// header. If they wrote to the file directly, a page could change in the
+/// file while an older copy of it was still dirty in a frame. The next
+/// write-back would then write the old copy over the new one. A direct
+/// write would also skip the log hook and break the write-ahead rule. With
+/// `PageStore`, every page has one copy, in the pool, and every write to the
+/// file goes through the hook.
 ///
-/// It's implemented on `&BufPool`, not on `BufPool`. `PageStore::write`
-/// takes `&mut self`, but threads share a pool through `&`, and no thread
-/// gets a `&mut BufPool`. With the impl on the reference, `&mut self` is a
-/// `&mut &BufPool`: a mutable borrow of the thread's own reference, which
-/// any thread can make. That's why callers write
-/// `freelist::allocate(&mut &pool)`. This is safe because the pool's own
-/// latches already keep threads from changing a page at the same time.
-/// The `&mut` doesn't have to.
+/// It is implemented on `&BufPool`, not on `BufPool`, for this reason:
+///
+/// - `PageStore::write` takes `&mut self`.
+/// - Threads share a pool through `&BufPool`, so no thread has a
+///   `&mut BufPool`.
+/// - With the impl on `&BufPool`, `&mut self` is a `&mut &BufPool`: a
+///   mutable borrow of the thread's own reference. Any thread can make one.
+///
+/// That is why callers write `freelist::allocate(&mut &pool)`. It is safe,
+/// because the pool's latches already stop two threads from changing a page
+/// at the same time. The `&mut` is not needed for that.
 ///
 /// How it differs from `PageFile`:
 ///
-/// - `write` copies the page into a frame and marks it dirty. It doesn't
+/// - `write` copies the page into a frame and marks it dirty. It does not
 ///   set the checksum. The page may change again before it reaches the
-///   file, so the checksum is set once, at write-back, from the bytes
-///   actually written.
+///   file, so the checksum is set once, at write-back, from the bytes that
+///   are written.
 /// - Each call takes a guard and drops it before it returns. So a sequence
-///   of calls, like `freelist::allocate`, isn't atomic. Making it atomic
-///   would mean one lock held across many calls, and every thread would
-///   wait on it, even threads that never allocate. A caller that allocates
-///   from many threads holds its own lock around the sequence.
-/// - The error type is the pool's own [`Error`], so an
+///   of calls, like `freelist::allocate`, is not atomic. To make it atomic,
+///   the pool would have to hold one lock across many calls, and every
+///   thread would wait for that lock, even threads that never allocate. A
+///   caller that allocates from many threads holds its own lock around the
+///   sequence.
+/// - The error type is the pool's own [`Error`]. So an
 ///   [`AllPinned`](Error::AllPinned) or a [`Log`](Error::Log) error from
-///   inside the freelist reaches the caller as itself.
+///   inside the freelist reaches the caller unchanged.
 impl PageStore for &BufPool {
     type Error = Error;
 

@@ -33,7 +33,7 @@ fn the_freelist_and_overflow_chains_run_through_the_pool() {
     let first = overflow::write_chain(&mut store, &value).unwrap();
     assert_eq!(overflow::read_chain(&store, first, 3000).unwrap(), value);
 
-    // The header on disk hasn't changed: the pool's copy counts the new pages.
+    // The header on disk has not changed: the pool's copy counts the new pages.
     assert_eq!(PageFile::open(&mem, "test.pf").unwrap().page_count(), 1);
     assert_eq!(pool.header().page_count, 16);
 
@@ -130,7 +130,8 @@ fn random_operations_match_the_model() {
 fn the_pools_errors_come_back_through_the_freelist() {
     let mem = Mem::new();
     let pool = pool(&mem, 3, 1);
-    // The one frame is pinned, so the new page `allocate` writes has nowhere to go.
+    // The one frame is pinned, so the new page `allocate` writes has nowhere to
+    // go.
     let held = pool.fetch(no(1)).unwrap();
     let mut store = &pool;
     assert!(matches!(
@@ -186,7 +187,8 @@ fn a_page_held_for_changing_is_never_written() {
 
     thread::scope(|s| {
         let flusher = s.spawn(|| pool.flush());
-        // `flush` waits for the guard. Until it's dropped, the file has the old page.
+        // `flush` waits for the guard. Until it is dropped, the file has the
+        // old page.
         thread::sleep(Duration::from_millis(50));
         assert!(!flusher.is_finished());
         assert_eq!(stamp_on_disk(&mem, 1), 1);
@@ -234,7 +236,8 @@ fn workload(mem: &Mem, acks: &mut Acks) -> vfs::Result<()> {
     Ok(())
 }
 
-/// The file must open after any crash, and every flushed page must have its stamp.
+/// The file must open after any crash, and every flushed page must have its
+/// stamp.
 fn flushed_pages_are_there(mem: &Mem, acks: &Acks) -> Result<(), String> {
     if !acks.created {
         return Ok(());

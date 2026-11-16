@@ -2,17 +2,18 @@
 //!
 //! | Term | Meaning |
 //! |---|---|
-//! | fetch number | A counter that goes up by 1 on every fetch. It's the clock LRU-K uses. |
+//! | fetch number | A counter that goes up by 1 on every fetch. It is the clock LRU-K uses. |
 //! | K-th time | The fetch number of a page's K-th most recent fetch. |
 //! | history | The last K fetch numbers of a page, kept even for a while after it leaves the pool. |
 //!
-//! Plain LRU looks only at the last fetch, so a page fetched once by a scan
-//! looks as valuable as a page fetched a thousand times. LRU-K remembers the
-//! times of each page's last K fetches, counted in fetches, not seconds. The
-//! victim is the page whose K-th most recent fetch is farthest back. A page
-//! with fewer than K fetches counts as infinitely far back, so a page seen
-//! once goes before any page seen K times. Among pages with fewer than K
-//! fetches, the one fetched least recently goes first.
+//! Plain LRU looks only at the last fetch of each page. So a page that a
+//! scan fetched once looks as useful as a page that was fetched a thousand
+//! times. LRU-K remembers the times of each page's last K fetches. Time is
+//! counted in fetches, not in seconds. The victim is the page whose K-th
+//! most recent fetch is the oldest. A page with fewer than K fetches counts
+//! as the oldest of all, so a page fetched once is evicted before any page
+//! fetched K times. Among the pages with fewer than K fetches, the one with
+//! the oldest last fetch is evicted first.
 //!
 //! ```text
 //! page   fetched at (newest first)   K = 2: 2nd newest
@@ -21,10 +22,11 @@
 //! 9      38  12                      12: evicted next
 //! ```
 //!
-//! A page's history outlives its stay in the pool. If page 3 is evicted
-//! and fetched again soon, its old fetch counts, so it's treated as a page
-//! seen twice. The history keeps up to [`REMEMBER`] pages per frame that
-//! have left the pool, and forgets the oldest half when it fills up.
+//! LRU-K keeps a page's history for a while after the page leaves the pool.
+//! If page 3 is evicted and then fetched again soon, its old fetch still
+//! counts, so it is treated as a page fetched twice. The history keeps up to
+//! [`REMEMBER`] pages per frame that have left the pool. When it is full, it
+//! forgets the older half of them.
 
 use pagefile::PageNo;
 
@@ -37,16 +39,16 @@ pub const MAX_K: usize = 4;
 
 /// How many pages that left the pool are remembered for each frame. The
 /// LRU-K paper calls this the retained information period and measures it
-/// in seconds. We measure it in pages, so the history has a fixed size and
-/// fits in a table made once.
+/// in seconds. This crate measures it in pages, so the history has a fixed
+/// size and fits in a table that is made once.
 ///
-/// It has to be more than 0, or a page evicted and fetched again soon would
-/// look brand new, and a scan could push out every page again. 8 per frame
-/// is enough to remember pages across a short gap without letting the
-/// history grow large.
+/// It must be more than 0. Otherwise a page that was evicted and fetched
+/// again soon would look like a page never fetched before, and a scan could
+/// evict every useful page again. 8 per frame is enough to remember pages
+/// across a short gap, and it keeps the history small.
 pub const REMEMBER: usize = 8;
 
-/// What LRU-K remembers about one page, whether it's in the pool or left
+/// What LRU-K remembers about one page, whether it is in the pool or left
 /// it recently.
 #[derive(Clone, Copy)]
 struct History {
@@ -61,7 +63,7 @@ struct History {
 ///
 /// It evicts the page whose K-th most recent fetch is furthest back. With
 /// K = 2, a page fetched once by a scan goes before any page fetched twice,
-/// so a scan of many pages can't push out the pages used over and over.
+/// so a scan of many pages cannot evict the pages that are used often.
 ///
 /// Finding a victim looks at every frame, so it takes time in proportion to
 /// the number of frames. The history holds up to `frames * (1 + REMEMBER)`
@@ -114,13 +116,14 @@ impl LruK {
         }
     }
 
-    /// Forgets the older half of the pages that aren't in the pool, to make
+    /// Forgets the older half of the pages that are not in the pool, to make
     /// room in the history. Older means a longer time since the last fetch.
     /// Pages in the pool are always kept.
     ///
-    /// It drops half at once, not one page, because it has to sort the
-    /// history to find the oldest. Dropping half means the next sort is many
-    /// new pages away, so the cost of sorting is spread over all of them.
+    /// It drops half of them in one call, not one page, because it has to
+    /// sort the history to find the oldest. After half is dropped, many new
+    /// pages must arrive before the next sort. So the cost of one sort is
+    /// shared by all of those pages.
     fn trim(&mut self) {
         let mut gone: Vec<(u64, PageNo)> = self
             .history
@@ -158,7 +161,7 @@ impl Policy for LruK {
     }
 
     fn victim(&mut self, evictable: &dyn Fn(usize) -> bool) -> Option<usize> {
-        // The smallest K-th time is the farthest back. A page with fewer than
+        // The smallest K-th time is the furthest back. A page with fewer than
         // K fetches has 0 there, so it comes first, and among those pages the
         // one fetched least recently goes first.
         (0..self.frames.len())

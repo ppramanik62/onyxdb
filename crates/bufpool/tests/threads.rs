@@ -16,7 +16,8 @@ use vfs::{Mem, Open, Rng, Vfs};
 const WORDS: usize = 60;
 
 /// The counter in `page`. Panics if its words disagree, which would mean two
-/// threads changed the page at once, or a frame held a mix of two pages.
+/// threads changed the page at the same time, or a frame held a mix of two
+/// pages.
 fn counter(page: &Page) -> u64 {
     let first = page.u64_at(16);
     for i in 1..WORDS {
@@ -30,7 +31,7 @@ fn eight_threads_agree_with_a_model() {
     const PAGES: u32 = 64;
     let mem = Mem::new();
     let pool = pool(&mem, PAGES, 12);
-    // Each thread counts its own adds to each page: that's the model.
+    // Each thread counts its own adds to each page: that is the model.
     let adds: Vec<Vec<u64>> = thread::scope(|s| {
         let threads: Vec<_> = (0..8)
             .map(|t| {
@@ -105,7 +106,8 @@ fn a_failed_read_fails_every_waiting_thread() {
             });
         }
     });
-    // Every frame is free again: the ten good pages can all be held at once.
+    // Every frame is free again: the ten good pages can all be held at the same
+    // time.
     let held: Vec<_> = (1..=11)
         .filter(|&n| n != 7)
         .map(|n| pool.fetch(no(n)).unwrap())

@@ -1,21 +1,23 @@
 //! The errors the pool can return.
 //!
-//! Every fallible function in this crate returns [`Result`]. Errors from the page
-//! file below come back wrapped in [`Error::PageFile`], so a caller matches on
-//! one enum.
+//! Every fallible function in this crate returns [`Result`]. Errors from the
+//! page file below come back wrapped in [`Error::PageFile`], so a caller
+//! matches on one enum.
 
 use std::{error, fmt, result};
 
 /// Everything that can go wrong fetching, writing or flushing a page.
 ///
-/// None of these errors leaves the pool broken. The call may already have written
-/// back or evicted a page to make room, but every page in the pool is still
-/// correct, and the caller can retry or carry on.
+/// After any of these errors, the pool still works. The failed call may
+/// already have written back or evicted a page to make room, but every page
+/// in the pool is still correct. The caller can retry the call or continue
+/// with other work.
 ///
-/// Page file errors all go inside one variant, `PageFile`. We don't copy each one
-/// into a variant of our own. The page file already has one variant per rule, with
-/// the numbers, and a copy here would have to change every time that list changed.
-/// The pool only adds the failures it causes itself.
+/// Every page file error goes inside one variant, `PageFile`. The pool does
+/// not copy each page file error into a variant of its own. The page file
+/// already has one variant per rule, with the numbers, and a copy here
+/// would have to change every time that list changed. The pool adds only
+/// the errors that it causes itself.
 ///
 /// # Examples
 ///
@@ -35,20 +37,22 @@ use std::{error, fmt, result};
 /// ```
 #[derive(Debug)]
 pub enum Error {
-    /// The page file failed. A read or write went wrong, a page's checksum
-    /// didn't match when it was loaded, or the page was past the end of the file,
-    /// so the read came up short. Through `PageStore`, it's also a page at or past
-    /// the header's page count. The inner error says which.
+    /// The page file failed. A read or a write went wrong, a page's checksum
+    /// did not match when it was loaded, or the page was past the end of the
+    /// file and the read came up short. Through `PageStore`, it can also
+    /// mean a page number at or past the header's page count. The inner
+    /// error says which one happened.
     PageFile(pagefile::Error),
-    /// A page had to be loaded, but every frame holds a pinned page, so there's no
-    /// frame to put it in. Dropping a guard unpins a frame and makes room. A pool
-    /// needs at least as many frames as the most guards a caller holds at once.
+    /// A page had to be loaded, but every frame holds a pinned page, so
+    /// there is no frame to put it in. Dropping a guard unpins a frame and
+    /// makes room. A pool needs at least as many frames as the largest
+    /// number of guards that callers hold at the same time.
     AllPinned {
         /// The number of frames in the pool.
         frames: usize,
     },
     /// The log hook failed to make the log durable, so a dirty page
-    /// couldn't be written. The page stays dirty in its frame. The inner
+    /// could not be written. The page stays dirty in its frame. The inner
     /// error is the one the hook returned.
     Log(Box<dyn error::Error + Send + Sync>),
 }
@@ -71,7 +75,8 @@ impl fmt::Display for Error {
 
 impl error::Error for Error {}
 
-/// This lets `?` on a page file operation turn its error into ours.
+// With this impl, `?` on a page file operation turns a `pagefile::Error`
+// into an `Error`.
 impl From<pagefile::Error> for Error {
     fn from(value: pagefile::Error) -> Self {
         Error::PageFile(value)

@@ -1,7 +1,7 @@
 //! Fetches per second, for hits and for misses, with 1 and 8 threads.
 //! Standard library only: it times a fixed number of fetches with `Instant`.
 //!
-//!     cargo bench -p bufpool --bench pool
+//!     cargo bench
 //!
 //! `baseline.txt` beside this file holds the numbers from an earlier run.
 //! A change that makes a number worse says so in its commit.

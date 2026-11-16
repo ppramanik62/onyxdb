@@ -1,4 +1,5 @@
 //! Helpers the tests share. Each test file uses only some of them.
+
 #![allow(dead_code)]
 
 use bufpool::{BufPool, Clock, NoLog};
