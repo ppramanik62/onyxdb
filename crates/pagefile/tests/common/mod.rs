@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
-/// A path in the temporary directory that's deleted when this value is dropped.
+/// A path in the temporary directory that is deleted when this value is dropped.
 pub struct TempPath(PathBuf);
 
 impl TempPath {

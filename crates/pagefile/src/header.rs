@@ -14,6 +14,18 @@
 //! ```
 //!
 //! Every number is little-endian.
+//!
+//! The header is a full page, not a small block, so that every page in the
+//! file has the same size and page `n` is always at `n × page size`. Most of
+//! page 0 is zeros, which costs one page per file.
+//!
+//! The 32 user bytes let the code that uses this crate keep a few numbers of
+//! its own, such as where its data starts, without a page of its own and
+//! without this crate knowing what they mean.
+//!
+//! The page size is inside page 0, but reading page 0 needs the page size.
+//! So a file is opened in two steps: read the first [`PREFIX_LEN`] bytes to
+//! learn the page size, then read all of page 0 and check its checksum.
 
 use crate::{
     Error, Page, PageNo, Result,
@@ -31,17 +43,33 @@ pub const VERSION: u16 = 1;
 pub const USER_LEN: usize = 32;
 
 /// How many bytes at the start of page 0 are enough to learn the page size:
-/// the magic string, the version and the page size.
+/// the magic, the version and the page size.
 pub const PREFIX_LEN: usize = 14;
 
-/// The header, decoded.
+/// The header, decoded: what the file says about itself.
+///
+/// It is a plain struct, so changing it changes nothing on disk. A
+/// `PageStore`'s `write_header` encodes it and writes it to page 0.
+///
+/// # Examples
+///
+/// ```
+/// use pagefile::{Header, Page};
+///
+/// let mut header = Header::new(512);
+/// header.page_count = 3;
+/// let mut page = Page::new(512);
+/// header.encode(&mut page);
+/// assert_eq!(&page.bytes()[..8], b"pagefile");
+/// assert_eq!(Header::decode(&page).unwrap(), header);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Header {
     /// 10: bytes per page.
     pub page_size: u32,
     /// 14: pages in the file, page 0 included.
     pub page_count: u32,
-    /// 18: the first page on the freelist.
+    /// 18: the first page on the freelist, or `None` if it is empty.
     pub free_head: Option<PageNo>,
     /// 22: how many pages are on the freelist.
     pub free_count: u32,
@@ -50,8 +78,30 @@ pub struct Header {
     pub user: [u8; USER_LEN],
 }
 
-/// Reads the page size from the first bytes of a file, after checking the
-/// magic string and the version.
+/// Reads the page size from the first [`PREFIX_LEN`] bytes of a file, after
+/// checking the magic string and the version.
+///
+/// # Examples
+///
+/// ```
+/// use pagefile::Error;
+/// use pagefile::header::{PREFIX_LEN, page_size_from_prefix};
+///
+/// let mut prefix = [0; PREFIX_LEN];
+/// prefix[..8].copy_from_slice(b"pagefile");
+/// prefix[8] = 1; // version 1
+/// prefix[10..14].copy_from_slice(&4096u32.to_le_bytes());
+/// assert_eq!(page_size_from_prefix(&prefix).unwrap(), 4096);
+///
+/// prefix[0] = b'x';
+/// assert!(matches!(page_size_from_prefix(&prefix), Err(Error::NotAPageFile)));
+/// ```
+///
+/// # Errors
+///
+/// - [`Error::NotAPageFile`] if the bytes do not start with [`MAGIC`].
+/// - [`Error::UnsupportedVersion`] if the version is not [`VERSION`].
+/// - [`Error::BadPageSize`] if the page size is not one a file can use.
 pub fn page_size_from_prefix(prefix: &[u8; PREFIX_LEN]) -> Result<usize> {
     if prefix[0..8] != MAGIC {
         return Err(Error::NotAPageFile);
@@ -65,7 +115,9 @@ pub fn page_size_from_prefix(prefix: &[u8; PREFIX_LEN]) -> Result<usize> {
 }
 
 impl Header {
-    /// The header of a new file: only page 0, and an empty freelist.
+    /// The header of a new file with pages of `page_size` bytes: a page
+    /// count of 1 for page 0 itself, an empty freelist, and zeroed user
+    /// bytes.
     pub fn new(page_size: usize) -> Header {
         Header {
             page_size: page_size as u32,
@@ -76,7 +128,8 @@ impl Header {
         }
     }
 
-    /// Writes the header into `page`, erasing whatever was there.
+    /// Writes the header into `page`, erasing whatever was there. It does not
+    /// set the checksum. Writing the page does that.
     pub fn encode(&self, page: &mut Page) {
         page.bytes_mut().fill(0);
         page.bytes_mut()[0..8].copy_from_slice(&MAGIC);
@@ -88,7 +141,30 @@ impl Header {
         page.bytes_mut()[26..26 + USER_LEN].copy_from_slice(&self.user);
     }
 
-    /// Reads the header from page 0. Check the page's checksum first.
+    /// Reads the header from page 0. It does not check the checksum, so
+    /// check it first with [`Page::verify`].
+    ///
+    /// The checksum is left to the caller so that a tool can still decode a
+    /// damaged header and show what is in it. Code that opens a file for use
+    /// checks the checksum first.
+    ///
+    /// # Errors
+    ///
+    /// The same as [`page_size_from_prefix`]. The other fields are not
+    /// checked here. Opening a file checks the page count against the
+    /// file's length.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pagefile::{Header, Page};
+    ///
+    /// let mut page = Page::new(512);
+    /// Header::new(512).encode(&mut page);
+    /// // The checksum, in the last 4 bytes, was never set. Decoding works anyway.
+    /// assert_eq!(page.u32_at(508), 0);
+    /// assert_eq!(Header::decode(&page).unwrap().page_count, 1);
+    /// ```
     pub fn decode(page: &Page) -> Result<Header> {
         let mut prefix = [0; PREFIX_LEN];
         prefix.copy_from_slice(&page.bytes()[..PREFIX_LEN]);

@@ -2,6 +2,10 @@
 //!
 //! Each variant names the rule that broke and carries the numbers involved,
 //! and `fmt` turns it into a message that says both.
+//!
+//! Errors from the file system come wrapped in [`Error::Vfs`]. Functions
+//! that work through any `PageStore` return the store's own error type,
+//! which every store can make from this one.
 
 use std::{error, fmt, result};
 
@@ -10,25 +14,50 @@ use vfs::{self};
 use crate::PageKind;
 
 /// Everything that can go wrong opening or using a page file.
+///
+/// Every variant but [`Vfs`](Error::Vfs) means the bytes broke a rule of
+/// the format, or the caller asked for something the file cannot do. A
+/// `Vfs` error means the file system failed.
+///
+/// Most variants carry the numbers that broke the rule, so the message can
+/// say what was expected and what was found. Two, `BadSlottedPage` and
+/// `BadChain`, carry a sentence instead, because the rule that broke can be
+/// one of several, each with different numbers. No caller handles
+/// those rules differently from each other. The sentence is for the person
+/// reading the error.
+///
+/// # Examples
+///
+/// ```
+/// use pagefile::Error;
+/// use pagefile::page::check_page_size;
+///
+/// let e = check_page_size(1000).unwrap_err();
+/// assert!(matches!(e, Error::BadPageSize(1000)));
+/// assert_eq!(e.to_string(), "page size 1000 is not a power of two from 512 to 32768");
+/// ```
 #[derive(Debug)]
 pub enum Error {
-    /// A page size that isn't a power of two from 512 to 32768.
+    /// A page size that is not a power of two from 512 to 32768.
     BadPageSize(u32),
-    /// The file doesn't start with the magic string `pagefile`.
+    /// The file does not start with the magic string `pagefile`.
     NotAPageFile,
-    /// The header's format version is unknown.
+    /// The header's format version is one this code does not know.
     UnsupportedVersion(u16),
     /// A file operation failed: the file system refused, or a simulated one
     /// lost power or injected a fault.
     Vfs(vfs::Error),
-    /// The file is shorter than its header says it should be.
+    /// The file is shorter than its header says it should be: shorter than
+    /// one page, or shorter than the page count times the page size. A
+    /// crash before the file was synced can leave a file like this.
     Truncated {
         /// The file's length, in bytes.
         len: u64,
         /// The length the header implies, in bytes.
         expected: u64,
     },
-    /// A page's stored checksum doesn't match its bytes.
+    /// A page's stored checksum does not match its bytes. The disk damaged
+    /// the page, or a write was torn, or the page was never written.
     Checksum {
         /// The page number.
         page: u32,
@@ -37,16 +66,18 @@ pub enum Error {
         /// The checksum of the bytes as they are now.
         computed: u32,
     },
-    /// A page number at or past the end of the file.
+    /// A page number at or past the header's page count.
     OutOfRange {
         /// The page number asked for.
         page: u32,
         /// The number of pages in the file.
         count: u32,
     },
-    /// A slotted page whose header or slots don't add up.
+    /// A slotted page whose header or slots do not add up. The text says
+    /// which numbers disagree.
     BadSlottedPage(String),
-    /// An item doesn't fit in a slotted page, even after compaction.
+    /// An item does not fit in a slotted page, even after compaction. The
+    /// page is unchanged.
     PageFull {
         /// Bytes the item needs, its slot included.
         need: usize,
@@ -64,15 +95,15 @@ pub enum Error {
         /// The kind byte the page has.
         found: u8,
     },
-    /// `free` was called on a page that's already on the freelist.
+    /// `free` was called on a page that is already on the freelist.
     DoubleFree(u32),
-    /// An overflow chain that ends too early, runs too long, or has a page with
-    /// a bad length.
+    /// An overflow chain that ends too early, runs too long, or has a page
+    /// with a bad length. The text says which page and which numbers.
     BadChain(String),
 }
 
-/// What every function in this crate returns. Functions over a `PageStore`
-/// return the store's error instead.
+/// The result of every fallible function in this crate. Functions over a
+/// `PageStore` set `E` to the store's error instead.
 pub type Result<T, E = Error> = result::Result<T, E>;
 
 impl fmt::Display for Error {
@@ -141,7 +172,8 @@ impl fmt::Display for Error {
 
 impl error::Error for Error {}
 
-// `?` on a file operation turns the `vfs::Error` into an `Error` through this.
+// With this impl, `?` on a file operation turns a `vfs::Error` into an
+// `Error`.
 impl From<vfs::Error> for Error {
     fn from(value: vfs::Error) -> Self {
         Error::Vfs(value)

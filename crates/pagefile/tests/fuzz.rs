@@ -38,7 +38,8 @@ fn bad_slotted_pages_return_errors() {
     let mut rng = Rng::new(1);
     let mut opened = 0;
     for case in 0..20_000 {
-        // Half the pages are random bytes, and half are real pages with a few bytes changed.
+        // Half the pages are random bytes, and half are real pages with a few
+        // bytes changed.
         let mut page = if case % 2 == 0 {
             let mut page = Page::new(SIZE);
             page.bytes_mut().copy_from_slice(&rng.bytes(SIZE));
@@ -62,7 +63,7 @@ fn bad_slotted_pages_return_errors() {
         }
         slotted.compact();
     }
-    // If almost nothing opens, the test isn't reaching the code it's for.
+    // If almost nothing opens, the test is not reaching the code it is for.
     assert!(opened > 1_000, "only {opened} of 20000 pages opened");
 }
 
@@ -73,7 +74,7 @@ fn bad_headers_return_errors() {
         let mut page = Page::new(SIZE);
         page.bytes_mut().copy_from_slice(&rng.bytes(SIZE));
         page.bytes_mut()[..8].copy_from_slice(&MAGIC);
-        // Version 1, so decoding goes on past the version check.
+        // Version 1, so decoding continues past the version check.
         page.bytes_mut()[8..10].copy_from_slice(&1u16.to_le_bytes());
         let _ = Header::decode(&page);
     }

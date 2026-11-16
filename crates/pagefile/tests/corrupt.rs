@@ -1,4 +1,4 @@
-//! Damaged files: flipped bits, torn writes, and files that aren't page files.
+//! Damaged files: flipped bits, torn writes, and files that are not page files.
 
 use std::path::Path;
 
@@ -6,7 +6,7 @@ use pagefile::{Error, PageFile};
 use vfs::{Mem, Open, Vfs};
 
 /// Makes a file `p.pf` that holds only the header page, with its user bytes
-/// set so the page isn't mostly zeros.
+/// set so the page is not mostly zeros.
 fn header_file(mem: &Mem) {
     let mut file = PageFile::create(mem, "p.pf", 512).unwrap();
     file.set_user([0xab; 32]).unwrap();
@@ -55,7 +55,8 @@ fn every_single_bit_flip_is_caught() {
     header_file(&mem);
     let raw = raw(&mem);
     let mut flipped = 0;
-    // Page 0 is bytes 0..512. Flip each of its 4096 bits in turn, checksum included.
+    // Page 0 is bytes 0..512. Flip each of its 4096 bits in turn, checksum
+    // included.
     for byte in 0..512u64 {
         for bit in 0..8 {
             let mut b = [0u8];

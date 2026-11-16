@@ -1,27 +1,71 @@
 //! Checking a whole file: every page readable, every slotted page consistent,
 //! and the freelist holding exactly the free pages.
 //!
-//! It can't tell whether a slotted page or an overflow chain is still in use.
+//! It cannot tell whether a slotted page or an overflow chain is still in use.
 //! Only the code that stores data in the pages knows which pages it still
 //! points to.
+//!
+//! It takes a `PageFile`, not any `PageStore`, because it checks the file as
+//! it is on disk. That includes bytes past the last page, which only the
+//! file can report.
+//!
+//! It finds these problems: a page that cannot be read or fails its
+//! checksum, a slotted page whose slots do not add up, an unknown kind byte,
+//! a freelist that reaches a page that is not free or loops, a free count
+//! that does not match the freelist, a free page that is not on the freelist,
+//! and bytes after the last page.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{Error, PageFile, PageKind, PageNo, PageStore, Result, Slotted, freelist::FREE_NEXT};
 
-/// What `check` found.
+/// What [`check`] found.
+///
+/// A file is healthy when `problems` is empty. `kinds` is there either
+/// way, as a summary of what the file holds.
+///
+/// The problems are sentences, not error values, because the report is for
+/// a person to read. Nothing reacts to one kind of problem differently from
+/// another; the file is either healthy or it is not.
 #[derive(Debug, Default)]
 pub struct Report {
-    /// How many pages there are of each kind, by name. Page 0 counts as "header".
+    /// How many pages there are of each kind, by name. Page 0 counts as
+    /// "header", a page that cannot be read as "damaged", and a page with an
+    /// unknown kind byte as "unknown".
     pub kinds: BTreeMap<&'static str, u32>,
-    /// Everything wrong with the file, one sentence each. Empty for a healthy file.
+    /// Everything wrong with the file, one sentence each. Empty for a healthy
+    /// file.
     pub problems: Vec<String>,
 }
 
-/// Reads every page of `file` and walks its freelist.
+/// Reads every page of `file` and walks its freelist, and reports what is
+/// wrong. It reads the whole file, so it takes time in proportion to its
+/// size. It never changes the file.
 ///
-/// Damaged pages are reported, not returned as errors. Only an I/O error
-/// stops the check.
+/// # Errors
+///
+/// Damaged pages are reported, not returned as errors. Only an
+/// [`Error::Vfs`] stops the check, because then the file cannot be read at
+/// all.
+///
+/// # Examples
+///
+/// ```
+/// use pagefile::check::check;
+/// use pagefile::{PageFile, freelist};
+/// use vfs::Mem;
+///
+/// let mem = Mem::new();
+/// let mut file = PageFile::create(&mem, "db", 512).unwrap();
+/// let n = freelist::allocate(&mut file).unwrap();
+/// freelist::allocate(&mut file).unwrap();
+/// freelist::free(&mut file, n).unwrap();
+///
+/// let report = check(&file).unwrap();
+/// assert!(report.problems.is_empty());
+/// assert_eq!(report.kinds["free"], 1);
+/// assert_eq!(report.kinds["empty"], 1);
+/// ```
 pub fn check(file: &PageFile) -> Result<Report> {
     let mut report = Report::default();
     report.kinds.insert("header", 1);

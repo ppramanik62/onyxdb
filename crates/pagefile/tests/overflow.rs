@@ -1,4 +1,5 @@
-//! Overflow chains: round trips, freeing, and chains that lie about their length.
+//! Overflow chains: round trips, freeing, and chains that lie about their
+//! length.
 
 use pagefile::overflow::{capacity, free_chain, read_chain, write_chain};
 use pagefile::{Error, PageFile};
@@ -24,7 +25,8 @@ fn freeing_a_chain_returns_every_page() {
     assert_eq!(file.page_count(), 4); // the header and three overflow pages
     free_chain(&mut file, first).unwrap();
     assert_eq!(file.header().free_count, 3);
-    // Writing the same value again reuses the three pages instead of growing the file.
+    // Writing the same value again reuses the three pages instead of growing
+    // the file.
     write_chain(&mut file, &[8; 1200]).unwrap();
     assert_eq!(file.page_count(), 4);
 }

@@ -37,7 +37,8 @@ fn freeing_twice_is_an_error() {
     ));
 }
 
-/// What the file should hold: the item written to each page in use, and which pages are free.
+/// What the file should hold: the item written to each page in use, and which
+/// pages are free.
 #[derive(Default)]
 struct Model {
     pages: BTreeMap<u32, Vec<u8>>,
@@ -76,7 +77,7 @@ fn run(seed: u64) -> PageFile {
                 file.write(n, &mut page).unwrap();
                 model.pages.insert(n.get(), item);
             }
-            // Free a page that's in use.
+            // Free a page that is in use.
             4..=5 if !model.pages.is_empty() => {
                 let number = *model
                     .pages

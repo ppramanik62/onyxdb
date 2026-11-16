@@ -6,6 +6,10 @@
 //! pagefile page FILE N      everything in page N
 //! pagefile check FILE       read every page and report problems
 //! ```
+//!
+//! It opens the file on the real disk and only reads it, never writes. It
+//! exits with status 1 if the arguments are wrong, if anything fails, or if
+//! `check` finds a problem, and 0 otherwise.
 
 use std::{env, path::Path, process::ExitCode};
 
@@ -51,8 +55,8 @@ fn main() -> ExitCode {
     }
 }
 
-/// Opens the page file at `path` on the real disk, with the file's own directory
-/// as the root of the file system.
+/// Opens the page file at `path` on the real disk, with the file's own
+/// directory as the root of the file system.
 fn open(path: &str) -> Result<PageFile> {
     let path = Path::new(path);
     let dir = path.parent().unwrap_or(Path::new(""));
@@ -60,7 +64,8 @@ fn open(path: &str) -> Result<PageFile> {
     PageFile::open(&Disk::new(dir), name)
 }
 
-/// Prints the header, one field per line. Returns true: there's nothing to fail.
+/// Prints the header, one field per line. Returns true: there is nothing to
+/// fail.
 fn print_header(h: &Header) -> bool {
     println!("page size      {}", h.page_size);
     println!("page count     {}", h.page_count);
@@ -108,8 +113,8 @@ fn summary(page: &Page) -> String {
     }
 }
 
-/// Prints everything in page `n`: the header for page 0, the slots and items
-/// for a slotted page, and the fields of the other kinds.
+/// Prints everything in page `n`: the header for page 0, the slots and
+/// items for a slotted page, and the fields of the other kinds.
 fn print_page(file: &PageFile, n: u32) -> Result<bool> {
     let Some(n) = PageNo::new(n) else {
         return Ok(print_header(file.header()));
@@ -140,7 +145,7 @@ fn print_page(file: &PageFile, n: u32) -> Result<bool> {
     Ok(true)
 }
 
-/// Shows bytes as quoted text when they're all printable, and as hex
+/// Shows bytes as quoted text when they are all printable, and as hex
 /// otherwise. Cut to 40 bytes.
 fn show(bytes: &[u8]) -> String {
     let cut = bytes.len().min(40);
@@ -154,8 +159,8 @@ fn show(bytes: &[u8]) -> String {
     }
 }
 
-/// Prints the page counts and every problem `check` found.
-/// Returns false is there were any.
+/// Prints the page counts and every problem `check` found. Returns false if
+/// there were any.
 fn print_check(file: &PageFile) -> Result<bool> {
     let report = check(file)?;
     let kinds: Vec<String> = report

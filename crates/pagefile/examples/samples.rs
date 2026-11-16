@@ -1,5 +1,5 @@
-//! Writes a set of small sample page files into a directory, one for each
-//! page layout and each kind of damage, for inspecting with the `pagefile` command.
+//! Writes a set of small sample page files into a directory, one for each page
+//! layout and each kind of damage, for inspecting with the `pagefile` command.
 //!
 //!     cargo run --example samples -- DIR
 

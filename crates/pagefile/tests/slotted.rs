@@ -49,7 +49,8 @@ fn run(seed: u64) {
             }
             _ => s.compact(),
         }
-        // `open` checks that the header, the slots and the garbage count still add up.
+        // `open` checks that the header, the slots and the garbage count still
+        // add up.
         let s = Slotted::open(&page).unwrap_or_else(|e| panic!("seed {seed} step {step}: {e}"));
         assert_eq!(s.tag(), 7);
         assert_eq!(s.len(), model.len());
@@ -67,13 +68,14 @@ fn run(seed: u64) {
 fn a_full_page_compacts_to_make_room() {
     let mut page = Page::new(512);
     let mut s = Slotted::init(&mut page, 0);
-    // Fill the page with 40-byte items until the next one doesn't fit.
+    // Fill the page with 40-byte items until the next one does not fit.
     let mut count = 0;
     while s.insert(count, &[b'a' + count as u8 % 26; 40]).is_ok() {
         count += 1;
     }
     assert_eq!(count, 11); // 11 × (40 + 4) = 484 of the 500 usable bytes after the header
-    // Remove two items in the middle. Their bytes become garbage, not free gap, so only compaction can reuse them.
+    // Remove two items in the middle. Their bytes become garbage, not free gap,
+    // so only compaction can reuse them.
     s.remove(3);
     s.remove(3);
     s.insert(3, &[b'z'; 80]).unwrap();
