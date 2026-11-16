@@ -512,3 +512,81 @@ impl Wal {
         Ok(state)
     }
 }
+
+impl Wal {
+    /// Removes the segments that hold only records up to `lsn`, oldest
+    /// first, then syncs the directory.
+    ///
+    /// Call it when the changes in those records are saved somewhere else,
+    /// for example after a checkpoint. A segment is removed when the segment
+    /// after it starts at or before `lsn`. The current segment is never
+    /// removed. Replay may still return some records with an LSN of `lsn` or
+    /// less, from the segment that holds `lsn`. Callers skip the ones they do
+    /// not need.
+    ///
+    /// `lsn` must be a value that [`append`](Wal::append) or
+    /// [`end`](Wal::end) returned. Such a position is always between two
+    /// records, never inside one. So every record after `lsn` keeps its
+    /// start.
+    ///
+    /// The segments are removed oldest first, so a crash cannot leave a gap
+    /// in the log. A crash keeps the name changes made in a directory since
+    /// its last sync as a prefix, in order. So the segments that are left
+    /// always form one unbroken run.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::Stopped`] if the log has stopped.
+    /// - [`Error::Vfs`] if removing a segment or syncing the directory
+    ///   fails. The log then stops.
+    ///
+    /// # Panics
+    ///
+    /// If another thread panicked while it held the log's mutex.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::{path::Path, sync::Arc};
+    /// use vfs::Mem;
+    /// use wal::{BLOCK, Wal, segment};
+    ///
+    /// let mem = Mem::new();
+    /// let wal = Wal::create(Arc::new(mem.clone()), "wal", BLOCK as u64).unwrap();
+    /// wal.append(&[1; BLOCK]).unwrap();
+    /// let lsn = wal.append(&[2; BLOCK]).unwrap();
+    /// assert_eq!(segment::list(&mem, Path::new("wal")).unwrap().len(), 3);
+    ///
+    /// // Only the current segment is left.
+    /// wal.drop_before(lsn).unwrap();
+    /// assert_eq!(segment::list(&mem, Path::new("wal")).unwrap(), [2 * BLOCK as u64]);
+    /// ```
+    pub fn drop_before(&self, lsn: Lsn) -> Result<()> {
+        let mut state = self.lock()?;
+        let result = self.remove_segments(&mut state, lsn);
+        if result.is_err() {
+            state.stopped = true;
+        }
+        result
+    }
+
+    /// Removes segments from the oldest one forward, while the segment after
+    /// each one starts at or before `lsn`. The current segment has no
+    /// segment after it, so it is never removed.
+    fn remove_segments(&self, state: &mut State, lsn: Lsn) -> Result<()> {
+        let n = state
+            .segments
+            .windows(2)
+            .take_while(|pair| pair[1] <= lsn)
+            .count();
+        if n == 0 {
+            return Ok(());
+        }
+        for &start in &state.segments[..n] {
+            self.vfs.remove(&segment::path(&self.dir, start))?;
+        }
+        self.vfs.sync_dir(&self.dir)?;
+        state.segments.drain(..n);
+        Ok(())
+    }
+}
