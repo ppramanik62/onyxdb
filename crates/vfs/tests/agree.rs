@@ -72,7 +72,8 @@ fn run(seed: u64, systems: &[Box<dyn Vfs>; 2]) {
             results[0], results[1],
             "seed {seed} step {step}: op {op} on {path:?}"
         );
-        // Open the file on both systems whenever it exists, to write to it later.
+        // Open the file on both systems whenever it exists, to write to it
+        // later.
         if let (Ok(disk), Ok(mem)) = (
             systems[0].open(&path, Open::Existing),
             systems[1].open(&path, Open::Existing),

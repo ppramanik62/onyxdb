@@ -23,7 +23,8 @@ fn replace(vfs: &dyn Vfs, contents: &[u8], sync_file: bool, sync_dir: bool) -> v
     Ok(())
 }
 
-/// What `config` holds after a crash: a whole version, or what's wrong with it.
+/// What `config` holds after a crash: a whole version, or what is wrong with
+/// it.
 fn config(mem: &Mem) -> vfs::Result<String> {
     let Ok(file) = mem.open(Path::new("config"), Open::Existing) else {
         return Ok("no config at all".to_string());

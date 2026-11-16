@@ -1,4 +1,5 @@
-//! What a crash keeps: synced data and names always, the rest as the model allows.
+//! What a crash keeps: synced data and names always, the rest as the model
+//! allows.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -144,15 +145,16 @@ fn the_power_goes_off_after_n_changes() {
     assert!(matches!(file.write_at(b"two", 3), Err(Error::PowerOff)));
     assert!(matches!(file.sync(), Err(Error::PowerOff)));
     mem.crash(1);
-    // The file's name was never synced, so whether it survived depends on the seed.
+    // The file's name was never synced, so whether it survived depends on the
+    // seed.
     let file = mem
         .open(Path::new("f"), Open::CreateNew)
         .or_else(|_| mem.open(Path::new("f"), Open::Existing));
     file.unwrap().write_at(b"back on", 0).unwrap();
 }
 
-/// Replaces the file `config` with `contents`: write a temporary file, sync
-/// it, rename it over `config`, and, when `sync_dir` is true, sync the directory.
+/// Replaces the file `config` with `contents`: write a temporary file, sync it,
+/// rename it over `config`, and, when `sync_dir` is true, sync the directory.
 fn replace(vfs: &dyn Vfs, contents: &[u8], sync_dir: bool) -> vfs::Result<()> {
     let tmp = vfs.open(Path::new("config.tmp"), Open::CreateNew)?;
     tmp.write_at(contents, 0)?;
@@ -164,7 +166,7 @@ fn replace(vfs: &dyn Vfs, contents: &[u8], sync_dir: bool) -> vfs::Result<()> {
     Ok(())
 }
 
-/// What `config` holds after a crash, or `None` if it's gone.
+/// What `config` holds after a crash, or `None` if it is gone.
 fn config_after_crash(sync_dir: bool, seed: u64) -> Option<Vec<u8>> {
     let mem = Mem::new();
     replace(&mem, b"version 1", true).unwrap();

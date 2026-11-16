@@ -1,10 +1,9 @@
 //! `Disk`: the real file system, through `std::fs`.
 //!
 //! Every path is joined to a root directory first, so `Disk::new("data")`
-//! and the path `pages.pf` mean the file `data/pages.pf`.
-//!
-//! Reads and writes use positioned I/O from `std::os::unix::fs::FileExt`,
-//! so this module is Unix-only.
+//! and the path `pages.pf` mean the file `data/pages.pf`. Reads and writes
+//! use positioned I/O from `std::os::unix::fs::FileExt`, so this module is
+//! Unix-only.
 
 use std::{
     fs::{self, OpenOptions},
@@ -16,24 +15,85 @@ use std::{
 use crate::{Error, File, Open, Result, Vfs};
 
 /// The real file system, below one root directory.
+///
+/// Each call goes directly to the operating system. `Disk` has no cache of
+/// its own. `sync` is `fsync` on the file, and `sync_dir` is `fsync` on the
+/// directory.
+///
+/// It has no cache because the operating system already keeps recently
+/// used file data in memory. A second cache here would use more memory. It
+/// would also hide which writes the operating system has received. Code
+/// that needs its own cache builds it above `Disk`, where it knows which
+/// data is worth keeping.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+/// use vfs::{Disk, Error, Open, Vfs};
+///
+/// # let root = std::env::temp_dir().join(format!("vfs-doc-{}", std::process::id()));
+/// # std::fs::create_dir_all(&root).unwrap();
+/// let fs = Disk::new(&root);
+/// fs.create_dir(Path::new("data")).unwrap();
+/// fs.open(Path::new("data/a.db"), Open::CreateNew).unwrap();
+/// assert!(root.join("data/a.db").exists());
+///
+/// // Paths can't climb out of the root.
+/// assert!(matches!(fs.exists(Path::new("../x")), Err(Error::BadPath(_))));
+/// # std::fs::remove_dir_all(&root).unwrap();
+/// ```
 pub struct Disk {
     root: PathBuf,
 }
 
 impl Disk {
     /// A file system whose paths are relative to `root`. `root` must exist.
+    /// Nothing is checked or opened until the first call.
+    ///
+    /// `root` takes `impl Into<PathBuf>`, so a `&str`, a `&Path` or a
+    /// `PathBuf` all work.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::Path;
+    /// use vfs::{Disk, Error, Open, Vfs};
+    ///
+    /// // Making it checks nothing, so a missing root shows up at the first call.
+    /// let fs = Disk::new("/no/such/root");
+    /// let result = fs.open(Path::new("a.db"), Open::Existing);
+    /// assert!(matches!(result, Err(Error::NotFound(_))));
+    /// ```
     pub fn new(root: impl Into<PathBuf>) -> Disk {
         Disk { root: root.into() }
     }
 
-    /// The real path of `path`.
+    /// The real path of `path`: `root` joined with it, after checking that
+    /// `path` is made only of plain names.
     fn real(&self, path: &Path) -> Result<PathBuf> {
         check_path(path)?;
         Ok(self.root.join(path))
     }
 }
 
-/// Checks that `path` is relative and made only of plain names.
+/// Checks that `path` is relative and made only of plain names, so it cannot
+/// reach outside the root. The empty path, the root, passes.
+///
+/// # Errors
+///
+/// [`Error::BadPath`] if `path` is absolute or has `.` or `..` in it.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+/// use vfs::disk::check_path;
+///
+/// assert!(check_path(Path::new("data/a.db")).is_ok());
+/// assert!(check_path(Path::new("/etc/passwd")).is_err());
+/// assert!(check_path(Path::new("data/../a.db")).is_err());
+/// ```
 pub fn check_path(path: &Path) -> Result<()> {
     if path.components().all(|c| matches!(c, Component::Normal(_))) {
         Ok(())
@@ -42,6 +102,14 @@ pub fn check_path(path: &Path) -> Result<()> {
     }
 }
 
+/// The real file system. Each method is the matching `std::fs` call on the
+/// path joined to the root, with its error turned into [`Error`].
+///
+/// Some methods check the path before they call the operating system. The
+/// operating system accepts a directory in `open`, `remove` and `rename`,
+/// but the trait says these calls must fail on a directory. So `Disk` checks
+/// for a directory first. When `rename` fails for this reason, the error
+/// names `from`, even if `to` is the directory.
 impl Vfs for Disk {
     fn open(&self, path: &Path, mode: crate::Open) -> Result<Box<dyn File>> {
         let real = self.real(path)?;
@@ -53,7 +121,7 @@ impl Vfs for Disk {
         let file = options
             .open(&real)
             .map_err(|e| Error::from_io("open", path, e))?;
-        // Opening a directory succeeds on Unix, but using it as a file doesn't.
+        // Opening a directory succeeds on Unix; using it as a file does not.
         let is_dir = file
             .metadata()
             .map_err(|e| Error::from_io("open", path, e))?
@@ -114,7 +182,7 @@ impl Vfs for Disk {
 
     fn sync_dir(&self, dir: &Path) -> Result<()> {
         let real = self.real(dir)?;
-        // On Linux, a directory is synced by opening it and syncing the handle.
+        // On Linux a directory is synced by opening it and syncing the handle.
         let handle = fs::File::open(real).map_err(|e| Error::from_io("sync_dir", dir, e))?;
         handle
             .sync_all()
@@ -122,7 +190,8 @@ impl Vfs for Disk {
     }
 }
 
-/// A file opened by `Disk`.
+/// A file opened by `Disk`: the open `std::fs::File`, and the path it was
+/// opened with, for error messages.
 struct DiskFile {
     file: fs::File,
     path: PathBuf,

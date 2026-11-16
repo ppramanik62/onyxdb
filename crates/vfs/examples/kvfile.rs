@@ -1,6 +1,6 @@
 //! A tiny key-value file, saved whole after every change, in two ways:
 //! written over itself, or replaced through a temporary file. `crash_test`
-//! cuts the power after every change each way makes, and checks what's left.
+//! cuts the power after every change each way makes, and checks what is left.
 //!
 //!     cargo run --example kvfile
 

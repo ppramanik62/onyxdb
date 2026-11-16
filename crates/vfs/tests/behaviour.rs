@@ -29,7 +29,7 @@ fn behaves_like_a_file_system(vfs: &dyn Vfs) {
     assert_eq!(file.len().unwrap(), 2);
     file.sync().unwrap();
 
-    // `open` respects what is and isn't there.
+    // `open` respects what is and is not there.
     assert!(matches!(
         vfs.open(p("a"), Open::CreateNew),
         Err(Error::AlreadyExists(_))
@@ -39,7 +39,7 @@ fn behaves_like_a_file_system(vfs: &dyn Vfs) {
         Err(Error::NotFound(_))
     ));
 
-    // Directories hold names, and a directory isn't a file.
+    // Directories hold names, and a directory is not a file.
     vfs.create_dir(p("d")).unwrap();
     vfs.open(p("d/x"), Open::CreateNew).unwrap();
     assert_eq!(vfs.list(p("")).unwrap(), [p("a"), p("d")]);
@@ -67,7 +67,7 @@ fn behaves_like_a_file_system(vfs: &dyn Vfs) {
     assert!(!vfs.exists(p("d/y")).unwrap());
     x.write_at(b"still here", 0).unwrap();
 
-    // One handle at a time holds a file's lock, until it's dropped.
+    // One handle at a time holds a file's lock, until it is dropped.
     let first = vfs.open(p("a"), Open::Existing).unwrap();
     first.try_lock().unwrap();
     first.try_lock().unwrap();

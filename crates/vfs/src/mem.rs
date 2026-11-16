@@ -1,11 +1,26 @@
 //! `Mem`: a file system in memory.
 //!
-//! All files and directories live in one `State` behind a mutex. Cloning a
-//! `Mem` is cheap, and the clones can be used from any thread.
+//! All files and directories are stored in one `State`, behind one mutex. A
+//! clone of a `Mem` copies only a pointer to that state, and any thread can
+//! use it.
 //!
-//! Each file and directory keeps three things: what it holds now, what it held
-//! at the last sync, and the changes since then. The `crash` module uses these
-//! to decide what a crash keeps.
+//! One mutex for everything is the simplest correct design. A crash must
+//! see every file and directory at the same moment, and with one mutex it
+//! only has to take that lock. The cost is that threads wait for each other
+//! on every call. `Mem` is only for tests, so that cost does not matter.
+//!
+//! Every call behaves as it does on `Disk`, with the same errors. In
+//! addition, `Mem` remembers which changes a real disk might not have saved
+//! yet. The `crash` module uses this to decide what survives a power
+//! failure.
+//!
+//! Each file and directory keeps three things: what it holds now, what it
+//! held at the last sync, and the list of changes since that sync.
+//!
+//! The changes are kept as a list, and not only as their result, because a
+//! crash treats each change separately. It can keep one write, lose the next
+//! one, and tear a third one. To do that, the crash needs every write, in
+//! order, with its offset.
 //!
 //! ```text
 //! State
@@ -32,24 +47,62 @@ use std::{
 use crate::{Error, File, Open, Result, Vfs, disk::check_path, fault::Faults};
 
 /// A file system in memory. A clone is another handle to the same file system.
+///
+/// It starts empty, with only the root directory. Every [`Vfs`] and
+/// [`File`] call works as on a real disk. `Mem` also keeps, for every file
+/// and directory, what was synced and what was not. That is what lets a
+/// test crash it at any point.
+///
+/// Every change counts toward the power cut that `power_off_after` sets. Once
+/// the power is off, every change fails with `Error::PowerOff`. After a
+/// crash, handles opened before it fail with [`Error::Stale`].
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+/// use vfs::{Mem, Open, Vfs};
+///
+/// let mem = Mem::new();
+/// let file = mem.open(Path::new("a.db"), Open::CreateNew).unwrap();
+/// file.write_at(b"hello", 0).unwrap();
+///
+/// // A clone sees the same files.
+/// let other = mem.clone();
+/// let file = other.open(Path::new("a.db"), Open::Existing).unwrap();
+/// let mut buf = [0; 5];
+/// file.read_at(&mut buf, 0).unwrap();
+/// assert_eq!(&buf, b"hello");
+/// ```
 #[derive(Clone)]
 pub struct Mem {
     state: Arc<Mutex<State>>,
 }
 
 /// Everything a `Mem` holds.
+///
+/// It and the types below are `pub(crate)`. Every module in this crate can
+/// see them, because `crash` and `fault` change them. Code outside the
+/// crate cannot.
 pub(crate) struct State {
     /// Starts at 0 and goes up by one at every crash. Each file handle stores
     /// the generation it was opened in.
     pub(crate) generation: u64,
     /// Every file ever created. A file's number is its index here. Removing a
     /// file only removes its name, so handles that are open keep working.
+    ///
+    /// Files are never taken out of this list, so a number is never reused.
+    /// That way a handle's number cannot end up pointing at a different file
+    /// created later. The cost is that a removed file's bytes stay in memory
+    /// until the `Mem` is dropped, which is fine for a test.
     pub(crate) files: Vec<Inode>,
     /// Every directory, by path. The root directory is the empty path.
     pub(crate) dirs: BTreeMap<PathBuf, Dir>,
-    /// How many changes have been made: writes, syncs, creates, removes and so on.
+    /// How many changes have been made: writes, set_lens, syncs, creates,
+    /// removes, renames and directory syncs. Reads are not changes.
     pub(crate) changes: u64,
-    /// How many more changes can happen before the power goes off. `None` means no limit.
+    /// How many more changes can happen before the power goes off. `None` means
+    /// no limit.
     pub(crate) power_left: Option<u64>,
     /// Faults waiting to happen.
     pub(crate) faults: Faults,
@@ -112,7 +165,8 @@ pub(crate) enum NameChange {
 }
 
 impl NameChange {
-    /// Makes this change to `names`.
+    /// Makes this change to `names`. A rename of a name that is not there
+    /// does nothing.
     pub(crate) fn apply(&self, names: &mut BTreeMap<OsString, Node>) {
         match self {
             NameChange::Add(name, node) => {
@@ -160,7 +214,8 @@ impl Inode {
     }
 }
 
-/// Copies `bytes` into `data` at `offset`, making `data` longer with zeros if needed.
+/// Copies `bytes` into `data` at `offset`, making `data` longer with zeros if
+/// needed.
 pub(crate) fn write_into(data: &mut Vec<u8>, offset: u64, bytes: &[u8]) {
     let start = offset as usize;
     let end = start + bytes.len();
@@ -171,7 +226,18 @@ pub(crate) fn write_into(data: &mut Vec<u8>, offset: u64, bytes: &[u8]) {
 }
 
 impl Mem {
-    /// An empty file system: just the root directory.
+    /// Makes an empty file system: just the root directory, with the power
+    /// on and no faults waiting.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::Path;
+    /// use vfs::{Mem, Vfs};
+    ///
+    /// let mem = Mem::new();
+    /// assert!(mem.list(Path::new("")).unwrap().is_empty());
+    /// ```
     pub fn new() -> Mem {
         let mut dirs = BTreeMap::new();
         dirs.insert(PathBuf::new(), Dir::default());
@@ -204,7 +270,12 @@ impl Default for Mem {
     }
 }
 
-/// Splits `path` into its directory and its last name.
+/// Splits `path` into its directory and its last name. `a/b/c` gives `a/b`
+/// and `c`, and `c` gives the root, the empty path, and `c`.
+///
+/// # Errors
+///
+/// [`Error::BadPath`] if `path` is not made of plain names, or is empty.
 fn split(path: &Path) -> Result<(PathBuf, OsString)> {
     check_path(path)?;
     let name = path
@@ -215,14 +286,23 @@ fn split(path: &Path) -> Result<(PathBuf, OsString)> {
 }
 
 impl State {
-    /// The directory at `path`.
+    /// The directory at `path`, to read or change its names.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::NotFound`] if no directory has that path.
     fn dir(&mut self, path: &Path) -> Result<&mut Dir> {
         self.dirs
             .get_mut(path)
             .ok_or_else(|| Error::NotFound(path.to_path_buf()))
     }
 
-    /// What `path` refers to, if anything.
+    /// What `path` refers to: a file, a directory, or `None` if nothing is
+    /// there or its directory does not exist.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::BadPath`] if `path` is not made of plain names.
     fn node(&mut self, path: &Path) -> Result<Option<Node>> {
         if path.as_os_str().is_empty() {
             return Ok(Some(Node::Dir));
@@ -349,7 +429,9 @@ impl Vfs for Mem {
     }
 }
 
-/// A file opened by `Mem`.
+/// A file opened by `Mem`. It refers to its file by number, so a rename or
+/// remove of its name does not affect it. That is how a file handle behaves on
+/// Unix, and code tested on `Mem` must see what it would see on `Disk`.
 struct MemFile {
     mem: Mem,
     /// The generation the file was opened in.
@@ -359,12 +441,22 @@ struct MemFile {
     /// The path it was opened with, for error messages.
     path: PathBuf,
     /// Whether this handle holds the file's lock.
+    ///
+    /// It is an `AtomicBool` because every `File` method takes `&self`, so a
+    /// plain `bool` could not be changed. `Relaxed` ordering is enough. It is
+    /// only changed while the state's mutex is held, and the mutex orders
+    /// those changes. `drop` reads it without the mutex, but by then no other
+    /// thread can use the handle.
     holds_lock: AtomicBool,
 }
 
 impl MemFile {
     /// Locks the state, after checking that no crash happened since the file
     /// was opened.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Stale`] if there was a crash since then.
     fn state(&self) -> Result<MutexGuard<'_, State>> {
         let state = self.mem.lock();
         if state.generation != self.generation {
@@ -421,8 +513,10 @@ impl File for MemFile {
         let mut state = self.state()?;
         state.change()?;
         state.sync_fault(self.inode)?;
-        // Apply `unsynced` to `synced`. Don't copy `data`: after a failed sync,
-        // it still has writes that were thrown away.
+        // Bring `synced` up to date by applying `unsynced` to it. Copying
+        // `data` would be wrong. A failed sync empties `unsynced` but leaves
+        // `data` alone, so `data` can hold writes that will never reach the
+        // disk. Those must not become synced now.
         let inode = &mut state.files[self.inode];
         for change in inode.unsynced.drain(..) {
             change.apply(&mut inode.synced);
@@ -445,8 +539,8 @@ impl File for MemFile {
 
 impl Drop for MemFile {
     /// Releases the lock, like closing a real file does. If a crash happened
-    /// since the file was opened, there's nothing to release: the crash already
-    /// released every lock.
+    /// since the file was opened, there is nothing to release: the crash
+    /// already released every lock.
     fn drop(&mut self) {
         if self.holds_lock.load(Ordering::Relaxed) {
             let mut state = self.mem.lock();
