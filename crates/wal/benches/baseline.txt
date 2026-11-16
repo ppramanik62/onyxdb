@@ -1,0 +1,3 @@
+append, not synced   1 thread      866803 records/s
+commit               1 thread        1960 commits/s
+commit               8 threads       2046 commits/s

@@ -8,3 +8,7 @@ vfs = { workspace = true }
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "wal"
+harness = false
