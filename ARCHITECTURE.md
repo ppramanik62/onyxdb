@@ -1,15 +1,15 @@
 # Architecture
 
-onyxdb is a SQL database built to learn how databases work inside. It covers what a real database must do: store data in its own format, survive crashes, cache pages, index, run SQL, isolate transactions, and serve many clients. Where there's a choice, it takes the simplest design that's still correct. Speed comes second.
+onyxdb is a SQL database, built to learn how databases work inside. It does what a real database must do: it stores data in its own format, survives crashes, caches pages, keeps indexes, runs SQL, isolates transactions, and serves many clients. Where there is a choice, it takes the simplest design that is still correct. Speed is the second goal, after correctness.
 
-This file is the final design. It's built in milestones, each a version you can run (see [Milestones](#milestones)). `vfs`, `pagefile` and `bufpool` are done. As each crate is built, its README describes how it actually works.
+This file is the final design. The database is built in milestones, and each milestone is a version that runs (see [Milestones](#milestones)). `vfs`, `pagefile` and `bufpool` are done, and so is part 1 of `wal`. When a crate is built, its README describes how its code works.
 
 ## Principles
 
 - **Standard library only.** Every layer is written here: formats, data structures, the query language, the protocol.
 - **One crate per layer.** Dependencies point down. A lower crate that needs something from above defines a trait.
 - **Correct before fast.** No stage exists only for speed.
-- **Every layer is tested alone,** against a simple model, and everything that writes to disk is crashed at every write.
+- **Every layer is tested alone,** against a simple model. The tests crash every layer that writes to disk at every write.
 
 ## The layers
 
@@ -32,7 +32,7 @@ This file is the final design. It's built in milestones, each a version you can 
         └──── vfs ────┘   every file operation
 ```
 
-`onyxdb` sits on top: the binary that owns the data directory, picks the engine, recovers, and starts the server.
+`onyxdb` is the top layer: the binary that owns the data directory, chooses the engine, recovers, and starts the server.
 
 ## Dependencies
 
@@ -57,15 +57,15 @@ flowchart LR
 
 ## Milestones
 
-Each milestone is a version you can run. It builds only the parts of each crate it needs, and the next milestone goes deeper. A crate gets its final interface in its first part, so later parts add to it without changing its types.
+Each milestone is a version that runs. It builds only the parts of each crate that it needs, and the next milestone builds more of them. A crate gets its final interface in its first part, so later parts add to the crate without changing its types.
 
 | Milestone | What works afterwards | Parts built |
 |---|---|---|
 | M0 | pages on disk, cached and checksummed | `vfs`, `pagefile`, `bufpool` |
 | M1 `v0.1` | a key-value store on a B-tree that survives `kill -9`, with a command line | `wal` (records, sync, replay), `kv`, `btree` (insert, delete, crash safety), `onyxdb` (data directory, recovery) |
 | M2 `v0.2` | SQL in a shell, one table per query, transactions taking turns | `mvcc` (versioned keys, snapshots), `sql` (parser, tables as keys, operators), `client` (the shell) |
-| M3 `v0.3` | the shell and your programs over the network | `wire`, `server` (sessions, login), `client` (the library) |
-| M4 `v0.4` | many clients at once, every isolation level correct | `wal` (group commit, fuzzy checkpoints), `btree` (B-link), `mvcc` (locks, SI, SSI, intents, GC), `server` (thread pool, schema locks) |
+| M3 `v0.3` | the shell and other programs over the network | `wire`, `server` (sessions, login), `client` (the library) |
+| M4 `v0.4` | many clients at the same time, every isolation level correct | `wal` (group commit, fuzzy checkpoints), `btree` (B-link), `mvcc` (locks, SI, SSI, intents, GC), `server` (thread pool, schema locks) |
 | M5 `v0.5` | indexes, joins, queries bigger than memory, the optimizer | `sql` (indexes, joins, spilling, statistics, prepared statements), `wire` and `client` (prepared statements) |
 | M6 `v1.0` | a second engine, and the whole design proven | `lsm`, `onyxdb` (engine choice, integrity check, backup, `kill -9` under load, benchmarks) |
 
@@ -88,7 +88,7 @@ The engine is chosen when the directory is created and never changes.
 
 ## 1. Files: `vfs`
 
-Every file operation goes through two traits, so tests can swap the disk for one that crashes on command.
+Every file operation goes through two traits. So the tests can replace the disk with a file system in memory that crashes when the test tells it to.
 
 ```text
 Vfs   open · exists · remove · rename · create_dir · list · sync_dir
@@ -98,7 +98,7 @@ File  read_at · write_at · len · set_len · sync · try_lock
 | Implementation | Use |
 |---|---|
 | `Disk` | the real file system, below a root directory |
-| `Mem` | in memory: keeps synced and unsynced data apart, crashes from a seed, injects faults |
+| `Mem` | in memory: keeps synced and unsynced data apart, crashes from a seed, and injects faults |
 
 What a crash keeps in `Mem`:
 
@@ -108,11 +108,11 @@ What a crash keeps in `Mem`:
 | names | always, once synced with `sync_dir`. Later changes survive as a prefix |
 | after a failed `sync` | the unsynced writes are gone for good |
 
-`crash_test` runs any workload, cuts the power after every change it makes, crashes with many seeds, and checks what's left. Every layer above uses it.
+`crash_test` runs any workload, cuts the power after every change the workload makes, crashes with many seeds, and checks the files that are left. Every layer above uses it.
 
 ## 2. Pages: `pagefile`
 
-A file is a numbered array of fixed-size pages. Every page carries its kind, its LSN and a checksum.
+A file is a numbered array of fixed-size pages. Every page holds its kind, its LSN and a checksum.
 
 ```text
 page n at byte n × page size
@@ -132,7 +132,7 @@ kinds: 0 empty · 1 free · 2 slotted · 3 overflow        page 0: the header
 | freelist | freed pages, linked through themselves, reused before the file grows |
 | `PageStore` | read and write pages by number, with the store's own error type. The freelist and overflow code work through it |
 
-Allocation goes through `PageStore`. So with a buffer pool in front, every change lands in a cached frame and is logged before it reaches the file. That includes changes to the header and the freelist. The pool owns the header then, so it uses the file's raw page I/O (`read_page`, `write_page`) and checks page numbers against its own header.
+Allocation goes through `PageStore`. So with a buffer pool in front of the file, every change goes to a cached frame first, and the log records it before it reaches the file. This includes changes to the header and the freelist. In that case the pool owns the header, so it uses the file's raw page I/O (`read_page`, `write_page`) and checks page numbers against its own header.
 
 ## 3. Buffer pool: `bufpool`
 
@@ -147,9 +147,9 @@ page table (own hash table)        frames
                                └─────────────────────────────┘
 ```
 
-- **Eviction** picks an unpinned frame, behind a trait: CLOCK, then LRU-K, which a sequential scan can't flush.
-- **The write-ahead rule.** A dirty page may reach the file only after the log is on disk up to its LSN. The pool asks through a hook trait it defines, and the B-tree plugs `wal` into it.
-- **Latches.** Each frame has a reader-writer latch, held by the guard a fetch returns until it's dropped. One mutex covers the page table, the pins and the policy, and it's never held during I/O.
+- **Eviction** picks an unpinned frame. A trait chooses the frame: CLOCK, or LRU-K, which a sequential scan cannot empty.
+- **The write-ahead rule.** A dirty page may reach the file only after the log is on disk up to the page's LSN. The pool asks the log through a hook trait that the pool defines, and the B-tree connects `wal` to that hook.
+- **Latches.** Each frame has a reader-writer latch. The guard that a fetch returns holds the latch until the guard is dropped. One mutex protects the page table, the pins and the policy, and the pool never holds it during I/O.
 
 ```mermaid
 sequenceDiagram
@@ -164,7 +164,7 @@ sequenceDiagram
 
 ## 4. Write-ahead log: `wal`
 
-An append-only stream of records, cut into 32 KiB blocks and stored in segment files named by the LSN they start at. A record's LSN is the byte position just past it, so LSNs only grow, and 0 means "never logged".
+An append-only stream of records. The stream is divided into 32 KiB blocks and stored in segment files, and each file is named by the LSN where it starts. A record's LSN is the byte position just past the record, so LSNs only grow, and 0 means "never logged".
 
 ```text
 wal/0000000000000000.wal   0000000000040000.wal   ...
@@ -172,15 +172,15 @@ wal/0000000000000000.wal   0000000000040000.wal   ...
 
 block (32 KiB)
 ┌──────────────────────────────────────────────────────────┐
-│ [crc | len | type | data] [crc | len | type | data] ...   │
+│ [crc | len | kind | data] [crc | len | kind | data] ...   │
 └──────────────────────────────────────────────────────────┘
-types: full · first · middle · last   (a record may span blocks and segments)
+kinds: full · first · middle · last   (a record may span blocks and segments)
 ```
 
-- **Append** writes a record. **`flush_to(lsn)`** syncs, so every record up to that LSN is durable. **Group commit** lets every writer waiting at that moment share one sync.
-- **After a failed write or sync**, the log refuses everything until it's reopened. Opening cuts the torn tail and rewrites the last segment, so nothing it replays can still be lost.
+- **`append`** writes a record. **`flush_to(lsn)`** syncs, so every record up to that LSN is durable. **Group commit** lets every writer that waits at that moment share one sync.
+- **After a failed write or sync,** the log refuses every call until it is opened again. `open` cuts off the torn end, writes the rest of the last segment again, and syncs it. So every record that replay returns is on the disk.
 - **Replay** returns every durable record, oldest first, and stops cleanly at a torn record at the end.
-- **Fuzzy checkpoints** note where replay can start, without stopping writers. Whole segments before that point are deleted.
+- **Fuzzy checkpoints** save the position where replay can start, without stopping writers. Then the log deletes the whole segments before that position.
 
 ## 5. The storage contract: `kv`
 
@@ -194,11 +194,11 @@ trait Kv: Send + Sync {
 }
 ```
 
-Three engines implement it: a `BTreeMap` model, the B-tree and the LSM tree. One test suite, random operations against the model plus a crash at every write, decides whether an engine is correct.
+Three engines implement it: a `BTreeMap` model, the B-tree and the LSM tree. One test suite decides whether an engine is correct. It runs random operations against the model, and it crashes the engine at every write.
 
 ## 6. B-tree engine: `btree`
 
-A B+tree on slotted pages. Leaves hold keys and values, and are linked left to right for scans. Interior nodes hold separator keys.
+A B+tree on slotted pages. Leaves hold keys and values, and each leaf links to the next one, left to right, for scans. Interior nodes hold separator keys.
 
 ```text
                  ┌───────────┐
@@ -211,7 +211,7 @@ A B+tree on slotted pages. Leaves hold keys and values, and are linked left to r
                                        └──▶ overflow chain for a long value
 ```
 
-**A committed batch.** Pages change in frames. The log gets one record holding a full image of every changed page. A record is whole or missing after a crash, so the record is the commit.
+**A committed batch.** Pages change in frames. Then the B-tree appends one record to the log, which holds a full image of every changed page. After a crash, a record is either whole or missing, so the record is the commit.
 
 ```mermaid
 sequenceDiagram
@@ -227,13 +227,13 @@ sequenceDiagram
   Note over P: dirty pages reach data.pf later, after their log records
 ```
 
-**Recovery.** Replay the records from the last checkpoint, in order, writing their page images over `data.pf`. A record cut short by a crash is never replayed. Full images also repair a page that was torn mid-write. No undo is needed here: unfinished transactions are undone a layer up, in `mvcc`.
+**Recovery.** The B-tree replays the records after the last checkpoint, in order, and writes their page images into `data.pf`. Replay never returns a record that a crash tore. The full images also repair a page that a crash tore in the middle of a write. The B-tree needs no undo: `mvcc`, the layer above, undoes unfinished transactions.
 
-**Concurrency.** B-link right pointers: a reader that lands on a node mid-split follows the right link instead of restarting.
+**Concurrency.** B-link right pointers. A reader that reaches a node in the middle of a split follows the right link, and does not start again.
 
 ## 7. LSM engine: `lsm`
 
-Writes go to memory first and are merged into sorted files in the background.
+Writes go to memory first. A background thread merges them into sorted files.
 
 ```text
 write ──▶ wal ──▶ memtable (skip list)
@@ -246,8 +246,8 @@ write ──▶ wal ──▶ memtable (skip list)
 read: memtable → L0 newest first → L1 → L2 …   (Bloom filters skip tables)
 ```
 
-- An SSTable is sorted blocks, an index block, a Bloom filter and a footer. Deletes are tombstones until compaction drops them.
-- The MANIFEST lists the live tables. It's replaced by write-sync-rename-`sync_dir`, so a crash mid-compaction leaves the old set or the new one.
+- An SSTable is sorted blocks, an index block, a Bloom filter and a footer. A delete is stored as a tombstone until compaction removes it.
+- The MANIFEST lists the live tables. The engine replaces it with write, sync, rename and `sync_dir`, so a crash in the middle of a compaction leaves either the old set of tables or the new one.
 
 ## 8. Transactions: `mvcc`
 
@@ -287,8 +287,8 @@ waits form a wait-for graph. A cycle is a deadlock, and the youngest transaction
 | serializable (SSI) | snapshot, plus tracking every key and range read. A dangerous read-write cycle aborts one transaction |
 | `SELECT ... FOR UPDATE` | row and range locks, so others can neither change nor insert into what was read |
 
-- **Timestamps** come from a counter that's saved, so a restart never reuses one.
-- **Large transactions** write intents (uncommitted versions) as they go, plus a transaction record. Readers that meet an intent check the record. At startup, intents of transactions without a commit are removed.
+- **Timestamps** come from a counter that is saved to disk, so a restart never uses a timestamp again.
+- **Large transactions** write intents (uncommitted versions) while they run, and a transaction record. A reader that finds an intent checks the record. At startup, `mvcc` removes the intents of transactions that did not commit.
 - **Garbage collection** removes versions older than the oldest running snapshot.
 
 ## 9. SQL: `sql`
@@ -335,10 +335,10 @@ sequenceDiagram
   S-->>C: Ready (idle | in transaction | failed)
 ```
 
-- Frames are a type byte, a length and a body. Errors carry a code, so a client can tell "retry this" from "fix this".
-- One session per connection, holding that connection's transaction state. A bounded thread pool refuses work it can't take.
+- A frame is a type byte, a length and a body. Each error has a code, so a client can tell "retry this" from "fix this".
+- Each connection has one session, which holds that connection's transaction state. A thread pool of fixed size refuses work it cannot take.
 - Idle and query timeouts, cancel, and a shutdown that rolls back open transactions and flushes.
-- The client library retries only what can't have committed. The REPL works like the `sqlite3` shell.
+- The client library retries only a statement that cannot have committed. The REPL works like the `sqlite3` shell.
 - The REPL runs on a `Session` trait that `client` defines: a network session in `client`, and an embedded one in `onyxdb`, so the same shell works with or without a server.
 
 ## 11. The binary: `onyxdb`
@@ -409,4 +409,4 @@ sequenceDiagram
 
 ## Not in scope
 
-Replication and sharding (the next part of the reading list), column storage, foreign keys, triggers, views, `ALTER TABLE`, and query caching. Each would add a feature without teaching a new fundamental.
+Replication and sharding (the next part of the reading list), column storage, foreign keys, triggers, views, `ALTER TABLE`, and query caching. Each of these adds a feature, but none teaches a new fundamental idea.
