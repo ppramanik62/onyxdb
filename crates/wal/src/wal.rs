@@ -16,27 +16,31 @@
 //!                      on disk         written, a crash may lose it
 //! ```
 //!
-//! `append` writes the record at once. The operating system keeps the bytes
-//! in its page cache, which is already a buffer, so the log doesn't keep one
-//! of its own. A record is on disk only after `flush_to` syncs it, and a
-//! caller should report a change as saved only after that.
+//! `append` writes the record to the file immediately. The log keeps no
+//! buffer of its own, because the operating system already keeps the
+//! written bytes in its page cache. Those bytes reach the disk only when
+//! `flush_to` syncs the file. A caller must not report a change as saved
+//! before that.
 //!
-//! One mutex covers the whole state. It's held while writing, so records go
-//! into the file in the order their LSNs were handed out. It's also held
-//! while syncing, which is the simple choice: an append waits for a sync
-//! that's running, so every commit pays for a whole sync of its own.
+//! One mutex protects the whole state. `append` holds it while it writes,
+//! so records reach the file in the same order as their LSNs. `flush_to`
+//! also holds it while it syncs. This is the simplest design, and it has a
+//! cost: an `append` that comes during a sync waits for the sync to finish,
+//! and every commit needs a sync of its own.
 //!
-//! When the current segment is full, it's synced before the next one is
-//! created, and the new file's name is synced into the directory before any
-//! record goes in it. Otherwise a later segment could hold records on disk
-//! while an earlier one lost its tail in a crash. Replay would stop at that
-//! hole, and the later records would be lost although they were synced.
+//! When the current segment is full, the log syncs it, then creates the next
+//! segment, then syncs the directory so the new file's name is on disk. Only
+//! then does it write records into the new segment. Without this order, a
+//! crash could keep records in the new segment and lose the end of the full
+//! one. Replay stops at the first hole, so it would never reach the records
+//! in the new segment, even though they were synced.
 //!
-//! On Linux, a failed `fsync` throws away the writes it was saving and marks
-//! them clean, so the next `fsync` succeeds without them. A failed write may
-//! have written part of a record. Either way, the log no longer knows what's
-//! on disk. So after any failed write, sync, create or remove, it stops:
-//! every call returns `Error::Stopped` until the log is opened again.
+//! After a failed write, sync, create or remove, the log stops. From then
+//! on, every call returns `Error::Stopped` until the log is opened again.
+//! The reason is that the log no longer knows what is on disk. A failed
+//! write may have written part of a record. A failed `fsync` on Linux drops
+//! the writes it was saving and marks them as saved, so the next `fsync`
+//! succeeds without writing them.
 
 use std::{
     path::{Path, PathBuf},
@@ -66,13 +70,15 @@ use crate::{BLOCK, Error, Lsn, Result, format::encode, segment};
 /// assert_eq!(wal.durable(), lsn);
 /// ```
 pub struct Wal {
-    /// The file system the segments live in. `dyn Vfs` is any type that
-    /// implements `Vfs`, and the `Arc` lets the caller keep using it too.
+    /// The file system that holds the segments. `dyn Vfs` is any type that
+    /// implements `Vfs`. The `Arc` lets the caller keep using the same file
+    /// system.
     vfs: Arc<dyn Vfs>,
     /// The directory that holds the segments.
     dir: PathBuf,
-    /// How many bytes a segment holds before the next one starts. A positive
-    /// multiple of `BLOCK`, so a block never spans two files.
+    /// How many bytes a segment holds before the next one starts. It is a
+    /// positive multiple of `BLOCK`, so a block is never split between two
+    /// files.
     segment_size: u64,
     /// Everything that changes, behind one mutex.
     state: Mutex<State>,
@@ -87,11 +93,11 @@ struct State {
     file: Box<dyn File>,
     /// The LSN just past the last record appended.
     end: Lsn,
-    /// Up to this LSN the records are on disk. Never more than `end` and
-    /// never goes down.
+    /// Every record whose LSN is at most this is on disk. It is never more
+    /// than `end`, and it never goes down.
     durable: Lsn,
-    /// Set after a failed write, sync, create or remove. While it's set,
-    /// every call returns `Error::Stopped`
+    /// Set after a failed write, sync, create or remove. While it is set,
+    /// every call returns `Error::Stopped`.
     stopped: bool,
 }
 
@@ -105,7 +111,7 @@ impl Wal {
     /// # Errors
     ///
     /// [`Error::Vfs`] if a file system call fails. If `dir` already exists,
-    /// that's `vfs::Error::AlreadyExists`.
+    /// that is `vfs::Error::AlreadyExists`.
     ///
     /// # Panics
     ///
@@ -178,13 +184,13 @@ fn new_segment(vfs: &dyn Vfs, dir: &Path, start: Lsn) -> Result<Box<dyn File>> {
 impl Wal {
     /// Appends `record` to the log, and returns its LSN.
     ///
-    /// The record is written to the current segment at once, and goes on in
-    /// a new segment if it fills this one. It isn't durable yet: call
-    /// [`flush_to`](Wal::flush_to) with the LSN before telling anyone it's
-    /// saved. A record can be any length, including 0. Replay returns it
-    /// whole or not at all.
+    /// The record is written to the current segment immediately. If it does
+    /// not fit, the rest of it goes into a new segment. The record is not
+    /// durable yet: call [`flush_to`](Wal::flush_to) with the LSN before
+    /// telling anyone that it is saved. A record can have any length,
+    /// including 0. Replay returns the whole record or none of it.
     ///
-    /// The LSN is the log position just past the record. It's bigger than
+    /// The LSN is the log position just past the record. It is bigger than
     /// every LSN returned before, and [`end`](Wal::end) returns it until the
     /// next append.
     ///
@@ -227,10 +233,10 @@ impl Wal {
         let mut rest = &bytes[..];
         while !rest.is_empty() {
             let start = *state.segments.last().expect("a log always has a segment");
-            // Normally a segment ends `segment_size` bytes after its start. If
-            // the log was opened with a smaller size than it was written
-            // with, this segment may already be longer, and it ends at the
-            // next block boundary instead.
+            // A segment is full `segment_size` bytes after its start. The log
+            // may have been written with a bigger `segment_size` than the one
+            // it was opened with. Then the current segment can already be
+            // longer than that, and it is full at the next block boundary.
             let full = (start + self.segment_size).max(pos.next_multiple_of(BLOCK as u64));
             if pos == full {
                 self.next_segment(state, pos)?;
@@ -249,8 +255,9 @@ impl Wal {
     /// Syncs the full current segment, then creates the segment that starts
     /// at `start` and makes it the current one.
     fn next_segment(&self, state: &mut State, start: Lsn) -> Result<()> {
-        // Every earlier segment must be on disk before a later one can hold
-        // a durable record.
+        // Sync the full segment before any record goes into the next one.
+        // Otherwise a crash could keep a record in the new segment and lose
+        // one before it in this segment.
         state.file.sync()?;
         state.file = new_segment(&*self.vfs, &self.dir, start)?;
         state.segments.push(start);
@@ -258,13 +265,13 @@ impl Wal {
     }
 
     /// Makes every record whose LSN is at most `lsn` durable, and returns
-    /// once they're on disk.
+    /// once they are on disk.
     ///
-    /// When `lsn` is past the end, this makes the whole log durable, so
-    /// `flush_to(u64::MAX)` means "everything appended so far". When those
-    /// records are already durable, it returns at once without syncing.
-    /// Otherwise it syncs the current segment, which makes every record
-    /// appended so far durable, not only the ones up to `lsn`.
+    /// An `lsn` past the end means the whole log, so `flush_to(u64::MAX)`
+    /// makes everything appended so far durable. If the records are already
+    /// durable, it returns immediately and does not sync. Otherwise it syncs
+    /// the current segment. That sync makes every record appended so far
+    /// durable, including the ones after `lsn`.
     ///
     /// Afterwards, [`durable`](Wal::durable) is at least the smaller of
     /// `lsn` and [`end`](Wal::end).
@@ -272,8 +279,8 @@ impl Wal {
     /// # Errors
     ///
     /// - [`Error::Stopped`] if the log has stopped.
-    /// - [`Error::Vfs`] if the sync fails. The records that weren't durable
-    ///   may be lost, so don't report them as saved. The log then stops.
+    /// - [`Error::Vfs`] if the sync fails. The records that were not durable
+    ///   may be lost, so do not report them as saved. The log then stops.
     ///
     /// # Panics
     ///
@@ -304,14 +311,15 @@ impl Wal {
             state.stopped = true;
             return Err(e.into());
         }
-        // Earlier segments were synced when they filled up, so the whole log
-        // is on disk now.
+        // Every earlier segment was synced when it filled up. With this
+        // segment synced too, the whole log is on disk.
         state.durable = state.end;
         Ok(())
     }
 
-    /// The LSN just past the last record appended. Before any append, it's
-    /// where the log's records end, which is 0 for a new log.
+    /// The LSN just past the last record appended. Before the first append,
+    /// it is the end of the records that were already in the log, or 0 for
+    /// a new log.
     ///
     /// # Panics
     ///
@@ -321,7 +329,7 @@ impl Wal {
     }
 
     /// The LSN up to which every record is on disk. It never goes down, and
-    /// it's never past [`end`](Wal::end).
+    /// it is never past [`end`](Wal::end).
     ///
     /// # Panics
     ///

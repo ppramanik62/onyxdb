@@ -22,42 +22,44 @@
 //!
 //! | Term | Meaning |
 //! |---|---|
-//! | block | 32 KiB of the log, starting at an LSN that's a multiple of `BLOCK`. |
+//! | block | 32 KiB of the log, starting at an LSN that is a multiple of `BLOCK`. |
 //! | fragment | A 7-byte header and part of one record's bytes, inside one block. |
 //! | kind | Which part of its record a fragment holds: full, first, middle or last. |
 //! | trailer | The zeros at the end of a block when fewer than `HEADER` bytes are left in it. |
 //!
-//! A record that fits in what's left of its block is one `Full` fragment.
-//! A longer one is a `First` fragment that fills the block, `Middle`
-//! fragments that fill whole blocks, and a `Last` fragment.
+//! A record that fits in the rest of its block is written as one `Full`
+//! fragment. A longer record is written as a `First` fragment that fills the
+//! rest of the block, then `Middle` fragments that each fill a whole block,
+//! then a `Last` fragment.
 //!
-//! Blocks make a damaged log easy to read past: a reader can always find
-//! the next fragment at the start of a block. They also cap a fragment's
-//! length, so it fits in two bytes.
+//! The log is cut into blocks so that a fragment is never longer than one
+//! block. Its length then fits in the two bytes of its header.
 //!
-//! When fewer than `HEADER` bytes are left in a block, no header fits. They
-//! stay zero, and the next fragment starts in the next block. When exactly
-//! `HEADER` bytes are left, a header with no data fits, so a record can
-//! start with an empty `First` fragment. Treating that case like any other
-//! keeps the writer simple.
+//! When fewer than `HEADER` bytes are left in a block, a header does not fit
+//! there. Those bytes stay zero, and the next fragment starts at the start of
+//! the next block. When exactly `HEADER` bytes are left, a header with no
+//! data fits, so a record can start with an empty `First` fragment. The
+//! writer does not treat this case in a special way, which keeps it simple.
 //!
-//! Bytes that were never written are zeros. A zeroed header has kind 0, which
-//! no fragment has, so a reader that reaches the unwritten end of the log
-//! stops there.
+//! Bytes that were never written are zeros. A header of zeros has kind 0,
+//! and no fragment has that kind. So when a reader reaches the part of the
+//! log that was never written, it sees an invalid fragment and stops.
 //!
-//! The CRC covers the length and the kind as well as the data. If a crash
-//! tears the length, the reader would take the wrong bytes as the data.
-//! Those would almost never match the CRC anyway, but with the length
-//! inside the CRC, a torn length fails the check by itself.
+//! The CRC covers the length and the kind, not only the data. A crash can
+//! tear the length field. A reader that trusts a wrong length reads the wrong
+//! bytes as the data, and those bytes would almost never match the CRC. But
+//! because the length is inside the CRC, a torn length always fails the
+//! check, whatever bytes follow it.
 
 use crate::{Lsn, crc::crc32c};
 
-/// The size of a block, in bytes. Every block starts at an LSN that's a
+/// The size of a block, in bytes. Every block starts at an LSN that is a
 /// multiple of this.
 ///
-/// 32 KiB is LevelDB's block size. A fragment's length must fit in the two
-/// bytes of its header, so a block can be at most 64 KiB. A smaller block
-/// would waste more of the log on headers and trailers.
+/// 32 KiB is the block size LevelDB uses. A fragment's length must fit in
+/// the two bytes of its header, so a block can be at most 64 KiB. A smaller
+/// block would have more blocks, and so more headers and trailers, for the
+/// same records.
 pub const BLOCK: usize = 32 * 1024;
 
 /// The size of a fragment's header: a 4-byte CRC, a 2-byte length and a
@@ -105,13 +107,14 @@ impl Kind {
 /// The bytes to write for a record whose first byte would go at log
 /// position `at`.
 ///
-/// The returned bytes belong at `at`. If fewer than [`HEADER`] bytes are
-/// left in that block, they start with the zeros that finish it. Then come
-/// the record's fragments, split at every block boundary. The record's LSN
-/// is `at` plus the length of what's returned.
+/// The caller writes the returned bytes at position `at`. If fewer than
+/// [`HEADER`] bytes are left in that block, the returned bytes start with
+/// zeros up to the end of the block. After that come the record's
+/// fragments, split at every block boundary. The record's LSN is `at` plus
+/// the length of the returned bytes.
 ///
-/// A record can be any length, including 0. It's copied once, into the
-/// returned vector.
+/// A record can have any length, including 0. Its bytes are copied once,
+/// into the returned vector.
 ///
 /// # Examples
 ///
@@ -194,13 +197,13 @@ pub struct Fragment<'a> {
     pub data: &'a [u8],
 }
 
-/// Reads the fragment that starts at byte `at` of `block`, if a valid one is
-/// there.
+/// Reads the fragment that starts at byte `at` of `block`, if a valid
+/// fragment is there.
 ///
-/// `block` holds a block's bytes from its start. It's shorter than
+/// `block` holds the bytes of one block, from its start. It is shorter than
 /// [`BLOCK`] when the log's files end inside the block. Returns `None` when
-/// the header doesn't fit in `block`, the kind isn't one of the four, the
-/// data runs past the end of `block`, or the CRC doesn't match. A reader
+/// the header does not fit in `block`, the kind is not one of the four, the
+/// data runs past the end of `block`, or the CRC does not match. A reader
 /// treats `None` as the end of the log.
 ///
 /// # Examples
@@ -221,7 +224,7 @@ pub fn decode(block: &[u8], at: usize) -> Option<Fragment<'_>> {
     let len = u16::from_le_bytes([header[4], header[5]]) as usize;
     let kind = Kind::from_byte(header[6])?;
     let stored = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
-    // The length, the kind and the data: everything the CRC covers
+    // The length, the kind and the data: everything the CRC covers.
     let covered = block.get(at + 4..at + HEADER + len)?;
     if crc32c(covered) != stored {
         return None;

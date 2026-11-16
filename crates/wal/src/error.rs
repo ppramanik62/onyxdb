@@ -9,9 +9,9 @@ use std::{error, fmt};
 /// Everything that can go wrong creating, opening, appending to, syncing or
 /// reading the log.
 ///
-/// A failed write, sync, create or remove stops the log. That call returns
-/// the file system's error, and every later call returns
-/// [`Error::Stopped`] until the log is opened again.
+/// A failed write, sync, create or remove stops the log. The call that
+/// failed returns the file system's error. Every later call returns
+/// [`Error::Stopped`], until the log is opened again.
 ///
 /// # Examples
 ///
@@ -31,12 +31,13 @@ use std::{error, fmt};
 /// ```
 #[derive(Debug)]
 pub enum Error {
-    /// A file system call failed. The inner error names the call and the path.
+    /// A file system call failed. The inner error names the call and the
+    /// path.
     Vfs(vfs::Error),
-    /// The log stopped after an earlier write, sync, create or remove
-    /// failed. It no longer knows which of its records are on disk, so it
-    /// refuses every call. Open it again with [`Wal::open`](crate::Wal::open),
-    /// which reads what's on disk.
+    /// The log stopped because an earlier write, sync, create or remove
+    /// failed. The log no longer knows which of its records are on disk, so
+    /// it refuses every call. To go on, open the log again with
+    /// [`Wal::open`](crate::Wal::open), which reads what is on disk.
     Stopped,
 }
 
@@ -57,7 +58,8 @@ impl fmt::Display for Error {
 
 impl error::Error for Error {}
 
-// This lets `?` on a file system call turn its error into ours.
+// With this impl, `?` on a file system call turns a `vfs::Error` into an
+// `Error`.
 impl From<vfs::Error> for Error {
     fn from(e: vfs::Error) -> Error {
         Error::Vfs(e)

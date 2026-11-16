@@ -1,9 +1,10 @@
 //! Segment files: where the log's bytes are stored.
 //!
-//! A file can't drop its beginning, but an old log has to be thrown away a
-//! piece at a time. So the log is stored in segment files, each holding a
-//! run of whole blocks. A segment is named by the LSN of its first byte, in
-//! 16 hex digits, so the names sort in log order:
+//! The log must be able to delete its oldest records once they are no
+//! longer needed. A file cannot remove bytes from its start. So the log is
+//! stored in many files, called segments, and it deletes old segments as a
+//! whole. Each segment holds a run of whole blocks. Its name is the LSN of
+//! its first byte, in 16 hex digits, so the names sort in log order:
 //!
 //! ```text
 //! wal/
@@ -13,9 +14,10 @@
 //! ```
 //!
 //! The last segment is the current one, where appends go. Every other
-//! segment holds exactly the bytes up to where the next one starts. Because
-//! the names say where each segment starts, [`list`] can check that, and so
-//! catch a segment that's missing or cut short.
+//! segment is full: it holds every byte from its own start to the start of
+//! the next segment. The names say where each segment starts, so [`list`]
+//! can check this rule. A missing segment, or one that is too short, breaks
+//! it.
 
 use std::path::{Path, PathBuf};
 
@@ -37,7 +39,7 @@ pub fn path(dir: &Path, start: Lsn) -> PathBuf {
 }
 
 /// The LSN a segment starts at, read from its file name, or `None` if
-/// `name` isn't a name that [`path`] makes.
+/// `name` is not a name that [`path`] makes.
 ///
 /// # Examples
 ///
@@ -49,7 +51,8 @@ pub fn path(dir: &Path, start: Lsn) -> PathBuf {
 /// ```
 pub fn start(name: &str) -> Option<Lsn> {
     let hex = name.strip_suffix(".wal")?;
-    // Exactly the 16 lowercase digits `path` writes, so each start has only one name.
+    // Accept only the 16 lowercase hex digits that `path` writes, so each
+    // start LSN has exactly one name.
     if hex.len() != 16 || !hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
         return None;
     }
