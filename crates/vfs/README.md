@@ -1,6 +1,7 @@
 # vfs
 
-File I/O behind a trait. `Disk` is what the database runs on. `Mem` is what its tests run on.
+File I/O behind a trait. The database runs on `Disk`, and its tests run on
+`Mem`, a file system in memory that can crash.
 
 ```text
                  database code
@@ -12,27 +13,29 @@ File I/O behind a trait. `Disk` is what the database runs on. `Mem` is what its 
                           cut the power, crash, inject faults
 ```
 
-No crate above this one uses `std::fs`. Everything goes through these traits, so any of it can be crash-tested.
+No crate above this one uses `std::fs`. All file I/O goes through these traits,
+so the tests can crash every crate that writes to disk at every write.
 
 ## The public API
 
-| Item | What it is | Use it when |
+| Item | What it is | When to use it |
 |---|---|---|
-| `Vfs` | a file system: `open`, `exists`, `remove`, `rename`, `create_dir`, `list`, `sync_dir` | you work with files or directories |
-| `File` | an open file: `read_at`, `write_at`, `len`, `set_len`, `sync`, `try_lock` | you read or write a file |
-| `Open` | `Existing` or `CreateNew` | you open a file |
-| `Disk` | the real file system, below a root directory | you run the database |
-| `Mem` | a file system in memory that can crash | you test code that writes files |
-| `Mem::changes()` | how many changes have been made so far | you want to know where to cut the power |
-| `Mem::power_off_after(n)` | lets `n` more changes happen, then fails every change | you want the power to go off at a set point |
-| `Mem::crash(seed)` | throws away some unsynced data, chosen by the seed | you want to see what a crash leaves |
-| `Mem::fail_next(Fault)` | makes the next write or sync fail: `WriteError` writes nothing, `ShortWrite` writes half, `SyncError` loses the unsynced writes | you test how your code handles a disk error |
-| `crash_test` | crashes a workload after every change, with many seeds, and returns a `Report` | you want to check a whole workload at once |
-| `Report`, `Failure` | `runs` and `failures`; each failure has `changes`, `seed` and `message` | you read a crash test's result |
-| `Rng` | a small seeded random generator | your tests need repeatable random input |
+| `Vfs` | a file system: `open`, `exists`, `remove`, `rename`, `create_dir`, `list`, `sync_dir` | to work with files or directories |
+| `File` | an open file: `read_at`, `write_at`, `len`, `set_len`, `sync`, `try_lock` | to read or write a file |
+| `Open` | `Existing` or `CreateNew` | to open a file |
+| `Disk` | the real file system, below a root directory | to run the database |
+| `Mem` | a file system in memory that can crash | to test code that writes files |
+| `Mem::changes()` | the number of changes made so far | to know where to cut the power |
+| `Mem::power_off_after(n)` | allows `n` more changes, then fails every change | to cut the power at a chosen point |
+| `Mem::crash(seed)` | drops some unsynced data, chosen by the seed | to see what a crash leaves |
+| `Mem::fail_next(Fault)` | makes the next write or sync fail: `WriteError` writes nothing, `ShortWrite` writes half, `SyncError` loses the unsynced writes | to test how code handles a disk error |
+| `crash_test` | crashes a workload after every change, with many seeds, and returns a `Report` | to check a whole workload against every crash point |
+| `Report`, `Failure` | `runs` and `failures`. Each failure has `changes`, `seed` and `message` | to read the result of a crash test |
+| `Rng` | a small seeded random generator | for random test input that is the same on every run |
 | `Error`, `Result` | every error, with the operation and the path | every call returns them |
 
-Paths are relative to the root, like `data/pages.pf`. The empty path is the root itself.
+Paths are relative to the root, like `data/pages.pf`. The empty path is the root
+itself.
 
 ## Writing a file safely
 
@@ -58,9 +61,13 @@ disk.sync_dir(Path::new("")).unwrap();
 std::fs::remove_dir_all(&root).unwrap();
 ```
 
-Swap `Disk::new(&root)` for `Mem::new()` and the rest is the same.
+With `Mem::new()` in place of `Disk::new(&root)`, the rest of the code is the
+same.
 
-If `sync` fails, don't retry it. On Linux, a failed sync throws away the writes it was saving, and the next sync succeeds anyway. Stop, and recover from what's on disk. `Mem` behaves the same way.
+Do not retry a `sync` that failed. On Linux, a failed sync drops the writes it
+could not save, and the next sync then succeeds with nothing to write. So after
+a failed sync, stop, and recover from what is on the disk. `Mem` behaves the
+same way.
 
 ## Testing against crashes
 
@@ -78,9 +85,11 @@ crash_test(seeds, workload, check) -> Report
                                           each failure keeps (n, seed)
 ```
 
-`A` is any type with a `Default`, like a `bool` or a count of saves. It lets the check tell data that was promised and lost from data that was never promised.
+`A` is any type with a `Default`, like a `bool` or a count of saves. With it,
+the check can tell data that was promised and lost from data that was never
+promised.
 
-The `kvfile` example saves a small file two ways and crash-tests both:
+The `kvfile` example saves a small file in two ways and crash-tests both:
 
 ```text
 in place: 240 crashes, 34 failed
@@ -88,7 +97,8 @@ first: power off after 6 changes, seed 5: store holds "apple=1\nbanana", which i
 by rename: 320 crashes, 0 failed
 ```
 
-To replay a failure, run the workload on a new `Mem` after `power_off_after(n)`, then call `crash(seed)`.
+To run a failure again, run the workload on a new `Mem` after
+`power_off_after(n)`, then call `crash(seed)`.
 
 ## What a crash keeps
 
@@ -105,23 +115,27 @@ To replay a failure, run the workload on a new `Mem` after `power_off_after(n)`,
 ## Decisions
 
 - **Trait objects, not generics.**
-  Why: a generic `PageFile<F: File>` would push a type parameter into every crate above.
+  Why: a generic `PageFile<F: File>` would add a type parameter to every crate
+  above this one.
   Cost: one indirect call per I/O. A system call costs far more.
 - **Positioned I/O only, and reads are exact.**
-  Why: a database reads and writes whole pages at known offsets. It never wants half a page.
-  Cost: no streaming reads. Callers ask for `len` before reading a whole file.
-- **Relative paths, and renames inside one directory.**
-  Why: a path means the same file to `Disk` and `Mem`. Replacing a file needs only one `sync_dir`.
-  Cost: files can't move between directories.
+  Why: a database reads and writes whole pages at known offsets. It never wants
+  half a page.
+  Cost: no streaming reads. A caller asks for `len` before it reads a whole
+  file.
+- **Relative paths, and renames only inside one directory.**
+  Why: a path names the same file in `Disk` and in `Mem`. Replacing a file needs
+  only one `sync_dir`.
+  Cost: a file cannot move to another directory.
 - **Our own `Error`, with the operation and the path.**
   Why: "write data/pages.pf: No space left on device" says what to fix.
   Cost: a bigger enum than `io::Error`.
-- **One exclusive lock, never waiting.**
+- **One exclusive lock, and `try_lock` never waits.**
   Why: one process owns a database.
   Cost: no shared locks.
 - **Seeded crashes.**
-  Why: a change count and a seed bring back the same failure every time.
-  Cost: the crash model has to be written down exactly.
+  Why: the same change count and seed give the same failure every time.
+  Cost: the crash model must be written down exactly.
 
 Not supported: memory-mapped files, shared locks, Windows, and async I/O.
 
