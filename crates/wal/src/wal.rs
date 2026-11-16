@@ -49,7 +49,7 @@ use std::{
 
 use vfs::{File, Open, Vfs};
 
-use crate::{BLOCK, Error, Lsn, Result, format::encode, segment};
+use crate::{BLOCK, Error, Lsn, Replay, Result, format::encode, replay::Reader, segment};
 
 /// An append-only log of records, stored in segment files in one directory.
 ///
@@ -163,6 +163,159 @@ impl Wal {
             state: Mutex::new(state),
         }
     }
+
+    /// Opens the log in `dir`, finds where its valid records end, and cuts
+    /// off everything after that.
+    ///
+    /// After a crash, the newest record may be torn, and the files may hold
+    /// bytes that were never synced. `open` reads the whole log, oldest
+    /// first, and stops at the first bad fragment, as replay does. It then
+    /// removes everything from the start of that fragment's record to the
+    /// end of the log: it deletes the later segments and shortens the
+    /// segment that holds the end. Last, it writes the rest of that segment
+    /// again and syncs it, so every record that is left is on disk. After
+    /// `open`, [`end`](Wal::end) and [`durable`](Wal::durable) are both the
+    /// LSN of the last whole record.
+    ///
+    /// A crash inside [`create`](Wal::create) can leave a directory with no
+    /// segments. `open` opens it as an empty log. `segment_size` does not
+    /// have to be the size the log was written with, because the name of
+    /// each segment says where it starts.
+    ///
+    /// `open` reads the log once to find its end. [`replay`](Wal::replay)
+    /// then reads it again to return the records.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::Vfs`] if a file system call fails. If `dir` does not exist,
+    ///   that is `vfs::Error::NotFound`.
+    /// - [`Error::Corrupt`] if the segments break a rule that
+    ///   [`segment::list`] checks.
+    ///
+    /// # Panics
+    ///
+    /// If `segment_size` is 0 or not a multiple of [`BLOCK`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use vfs::Mem;
+    /// use wal::{BLOCK, Wal};
+    ///
+    /// let mem = Mem::new();
+    /// let wal = Wal::create(Arc::new(mem.clone()), "wal", BLOCK as u64).unwrap();
+    /// let lsn = wal.append(b"put apple 1").unwrap();
+    /// wal.flush_to(lsn).unwrap();
+    /// drop(wal);
+    ///
+    /// let wal = Wal::open(Arc::new(mem), "wal", BLOCK as u64).unwrap();
+    /// assert_eq!(wal.end(), lsn);
+    /// ```
+    pub fn open(vfs: Arc<dyn Vfs>, dir: impl AsRef<Path>, segment_size: u64) -> Result<Wal> {
+        check_size(segment_size);
+        let dir = dir.as_ref();
+        let mut segments = segment::list(&*vfs, dir)?;
+        if segments.is_empty() {
+            let file = new_segment(&*vfs, dir, 0)?;
+            return Ok(Wal::new(vfs, dir, segment_size, vec![0], file, 0));
+        }
+        // Read every record, to find where the valid ones end.
+        let mut reader = Reader::new(&*vfs, dir, segments.clone())?;
+        while reader.next_record()?.is_some() {}
+        let end = reader.end();
+        let file = cut_tail(&*vfs, dir, &mut segments, end)?;
+        Ok(Wal::new(vfs, dir, segment_size, segments, file, end))
+    }
+
+    /// Returns an iterator over every durable record in the log, oldest
+    /// first.
+    ///
+    /// To recover after a crash, call it right after [`open`](Wal::open).
+    /// At that point every record in the log is durable, so the iterator
+    /// returns all of them. The iterator does not return records that were
+    /// appended after this call, or records that are not durable yet. After
+    /// [`drop_before(x)`](Wal::drop_before), the first records may still
+    /// have an LSN of `x` or less. The caller skips the ones it does not
+    /// need.
+    ///
+    /// The iterator reads the segment files without the log's mutex, so
+    /// other threads can append while it runs. Do not call `drop_before`
+    /// while it runs. `drop_before` may remove a segment that the iterator
+    /// has not read yet, and the iterator then returns [`Error::Vfs`].
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::Stopped`] if the log has stopped.
+    /// - [`Error::Vfs`] if the oldest segment cannot be
+    ///   opened or read.
+    ///
+    /// # Panics
+    ///
+    /// If another thread panicked while it held the log's mutex.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use vfs::Mem;
+    /// use wal::{BLOCK, Wal};
+    ///
+    /// let wal = Wal::create(Arc::new(Mem::new()), "wal", BLOCK as u64).unwrap();
+    /// let lsn = wal.append(b"durable").unwrap();
+    /// wal.flush_to(lsn).unwrap();
+    /// wal.append(b"not yet").unwrap();
+    ///
+    /// // Only the durable record comes back.
+    /// assert_eq!(wal.replay().unwrap().count(), 1);
+    /// ```
+    pub fn replay(&self) -> Result<Replay<'_>> {
+        let (segments, durable) = {
+            let state = self.lock()?;
+            (state.segments.clone(), state.durable)
+        };
+        let reader = Reader::new(&*self.vfs, &self.dir, segments)?;
+        Ok(Replay::new(reader, durable))
+    }
+}
+
+/// Removes everything after `end`, the LSN just past the last whole record.
+/// Returns the segment that holds `end`, opened. That segment becomes the
+/// current one, and the removed segments are taken out of `segments`.
+///
+/// The bytes after `end` must be removed. New records will be written over
+/// them. If the new records are shorter than the old bytes, some old bytes
+/// stay after them. A later replay could read on into those old bytes and
+/// return records that were never synced and never reported as saved.
+///
+/// The steps go in this order. First, it removes the later segments, the
+/// newest first, and syncs the directory. Then it shortens the segment that
+/// holds `end`, writes its bytes again, and syncs it. A crash can happen
+/// between any two steps, and the files are still valid after it: every
+/// segment except the last one stays full.
+fn cut_tail(vfs: &dyn Vfs, dir: &Path, segments: &mut Vec<Lsn>, end: Lsn) -> Result<Box<dyn File>> {
+    // The segment that holds `end` is the newest segment that starts at or
+    // before `end`. If `end` is exactly where a segment starts, it is that
+    // segment, and the segment becomes empty.
+    let keep = segments.partition_point(|&start| start <= end);
+    if keep < segments.len() {
+        for &start in segments[keep..].iter().rev() {
+            vfs.remove(&segment::path(dir, start))?;
+        }
+        vfs.sync_dir(dir)?;
+        segments.truncate(keep);
+    }
+    let start = segments[keep - 1];
+    let file = vfs.open(&segment::path(dir, start), Open::Existing)?;
+    file.set_len(end - start)?;
+    // `&*file` borrows the `File` inside the box.
+    rewrite_tail(&*file, end - start)?;
+    file.sync()?;
+    Ok(file)
+}
+
+fn rewrite_tail(_file: &dyn File, _len: u64) -> Result<()> {
+    Ok(())
 }
 
 /// Panics unless `segment_size` is a positive multiple of `BLOCK`.

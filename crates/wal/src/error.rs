@@ -4,7 +4,7 @@
 //! file system come back wrapped in [`Error::Vfs`], so a caller matches on
 //! one enum.
 
-use std::{error, fmt};
+use std::{error, fmt, path::PathBuf};
 
 /// Everything that can go wrong creating, opening, appending to, syncing or
 /// reading the log.
@@ -39,6 +39,16 @@ pub enum Error {
     /// it refuses every call. To go on, open the log again with
     /// [`Wal::open`](crate::Wal::open), which reads what is on disk.
     Stopped,
+    /// The log's files break a rule that this crate always keeps when it
+    /// writes them, so something else changed the files. `reason` says
+    /// which rule broke, with the numbers. A torn record at the end of the
+    /// log does not cause this error. The log just ends before that record.
+    Corrupt {
+        /// The file or directory that breaks the rule.
+        path: PathBuf,
+        /// Which rule it breaks.
+        reason: String,
+    },
 }
 
 /// The result of every fallible function in this crate.
@@ -52,6 +62,7 @@ impl fmt::Display for Error {
                 f,
                 "the log stopped after an earlier write or sync failed; open it again"
             ),
+            Error::Corrupt { path, reason } => write!(f, "{}: {reason}", path.display()),
         }
     }
 }

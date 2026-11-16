@@ -21,7 +21,9 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::Lsn;
+use vfs::{Open, Vfs};
+
+use crate::{BLOCK, Error, Lsn, Result};
 
 /// The path of the segment that starts at LSN `start`, inside `dir`.
 ///
@@ -57,4 +59,70 @@ pub fn start(name: &str) -> Option<Lsn> {
         return None;
     }
     u64::from_str_radix(hex, 16).ok()
+}
+
+/// The start of every segment in `dir`, oldest first. Before it returns, it
+/// checks that the segments together hold one log with no gaps.
+///
+/// It opens every segment except the last one to read its length. Returns
+/// an empty list if `dir` holds no files.
+///
+/// # Errors
+///
+/// - [`Error::Vfs`] if `dir` cannot be listed, or a segment cannot be opened.
+///   If `dir` does not exist, that is `vfs::Error::NotFound`.
+/// - [`Error::Corrupt`] if a file in `dir` is not named like a segment, a
+///   segment does not start at a block boundary, or a segment other than the
+///   last does not end exactly where the next one starts.
+///
+/// # Examples
+///
+/// ```
+/// use std::{path::Path, sync::Arc};
+/// use vfs::Mem;
+/// use wal::{BLOCK, Wal, segment};
+///
+/// let mem = Mem::new();
+/// let wal = Wal::create(Arc::new(mem.clone()), "wal", BLOCK as u64).unwrap();
+/// // A record bigger than one block fills the first segment.
+/// wal.append(&[7; BLOCK]).unwrap();
+/// assert_eq!(segment::list(&mem, Path::new("wal")).unwrap(), [0, BLOCK as u64]);
+/// ```
+pub fn list(vfs: &dyn Vfs, dir: &Path) -> Result<Vec<Lsn>> {
+    let mut starts = Vec::new();
+    for path in vfs.list(dir)? {
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let Some(start) = start(name) else {
+            let reason = "not a segment: a segment's name is 16 hex digits and .wal";
+            return Err(Error::Corrupt {
+                path,
+                reason: reason.into(),
+            });
+        };
+        if !start.is_multiple_of(BLOCK as u64) {
+            return Err(Error::Corrupt {
+                path,
+                reason: format!(
+                    "the segment starts at LSN {start}, which isn't a multiple of the block size {BLOCK}"
+                ),
+            });
+        }
+        starts.push(start);
+    }
+    // A real directory lists its files in no particular order.
+    starts.sort_unstable();
+    for pair in starts.windows(2) {
+        let path = path(dir, pair[0]);
+        let len = vfs.open(&path, Open::Existing)?.len()?;
+        if pair[0] + len != pair[1] {
+            return Err(Error::Corrupt {
+                path,
+                reason: format!(
+                    "the segment holds {len} bytes, but the next one starts {} bytes after it",
+                    pair[1] - pair[0]
+                ),
+            });
+        }
+    }
+    Ok(starts)
 }

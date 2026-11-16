@@ -31,3 +31,16 @@ pub fn number(r: &[u8]) -> Option<u64> {
     let i = u64::from_le_bytes(r.get(..8)?.try_into().ok()?);
     (record(i, r.len() - 8) == r).then_some(i)
 }
+
+/// Opens the log in `wal/` on `mem` again.
+pub fn open(mem: &Mem) -> wal::Result<Wal> {
+    Wal::open(Arc::new(mem.clone()), "wal", SEGMENT)
+}
+
+/// The numbers of every record `wal` replays, in order.
+pub fn replayed(wal: &Wal) -> Vec<u64> {
+    wal.replay()
+        .unwrap()
+        .map(|r| number(&r.unwrap().data).expect("a record we wrote"))
+        .collect()
+}
