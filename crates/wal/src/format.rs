@@ -12,7 +12,7 @@
 //! ┌─────────┬──────┬──────┬─────────────────┐
 //! │ CRC-32C │ len  │ kind │ data: len bytes │    numbers are little-endian
 //! └─────────┴──────┴──────┴─────────────────┘
-//!           └───── the CRC covers these ────┘
+//!           └─────── the CRC covers these ───┘
 //!
 //! a block of 32 KiB
 //! ┌────────────┬──────────────┬───────────────────────┬─────────┐
@@ -82,9 +82,9 @@ pub const HEADER: usize = 7;
 pub enum Kind {
     /// A whole record.
     Full = 1,
-    /// The start of a record that goes on in the next block.
+    /// The start of a record that continues in the next block.
     First = 2,
-    /// A part of a record that started in an earlier block and goes on in
+    /// A part of a record that started in an earlier block and continues in
     /// the next.
     Middle = 3,
     /// The end of a record that started in an earlier block.

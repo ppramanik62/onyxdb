@@ -11,9 +11,9 @@
 //!  append   ──▶ write_at into the current segment     (the OS's page cache)
 //!  flush_to ──▶ sync the current segment              (the disk)
 //!
-//!  0                   durable                   end
+//!  0                     durable                 end
 //!  ├──────────────────────┼───────────────────────┤
-//!                      on disk         written, a crash may lose it
+//!     on disk              written, a crash may lose it
 //! ```
 //!
 //! `append` writes the record to the file immediately. The log keeps no
@@ -163,7 +163,6 @@ impl Wal {
             state: Mutex::new(state),
         }
     }
-
     /// Opens the log in `dir`, finds where its valid records end, and cuts
     /// off everything after that.
     ///
@@ -227,7 +226,6 @@ impl Wal {
         let file = cut_tail(&*vfs, dir, &mut segments, end)?;
         Ok(Wal::new(vfs, dir, segment_size, segments, file, end))
     }
-
     /// Returns an iterator over every durable record in the log, oldest
     /// first.
     ///
@@ -439,7 +437,6 @@ impl Wal {
         state.segments.push(start);
         Ok(())
     }
-
     /// Makes every record whose LSN is at most `lsn` durable, and returns
     /// once they are on disk.
     ///

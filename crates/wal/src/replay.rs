@@ -33,7 +33,7 @@
 //! hole. So the bytes after a hole were never synced, and no caller was told
 //! that their records were saved. Dropping them breaks no promise.
 //!
-//! The reader must not skip the hole and go on either. A record after the
+//! The reader must not skip the hole and continue either. A record after the
 //! hole would come back while a record before it is missing, and the log
 //! promises that records come back in the order they were appended.
 //!
@@ -162,7 +162,6 @@ impl<'a> Reader<'a> {
         self.at = data.end;
         Ok(Some((kind, data)))
     }
-
     /// The next whole record, or `None` at the log's valid end.
     ///
     /// # Errors

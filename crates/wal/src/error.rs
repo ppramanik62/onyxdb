@@ -36,7 +36,7 @@ pub enum Error {
     Vfs(vfs::Error),
     /// The log stopped because an earlier write, sync, create or remove
     /// failed. The log no longer knows which of its records are on disk, so
-    /// it refuses every call. To go on, open the log again with
+    /// it refuses every call. To continue, open the log again with
     /// [`Wal::open`](crate::Wal::open), which reads what is on disk.
     Stopped,
     /// The log's files break a rule that this crate always keeps when it
