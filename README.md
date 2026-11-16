@@ -61,3 +61,7 @@ every push.
   defines a trait and the crate above implements it.
 - Each crate's README describes the code as it is now, and it changes in the
   same commit as the code.
+
+## License
+
+[MIT](LICENSE).
