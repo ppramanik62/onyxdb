@@ -47,6 +47,7 @@ flowchart LR
   bufpool --> btree
   wal --> btree
   kv --> btree
+  wal --> kv
   wal --> lsm
   kv --> lsm
   server --> onyxdb
@@ -189,12 +190,16 @@ Everything above storage sees one interface.
 ```rust
 trait Kv: Send + Sync {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>>;
-    fn scan(&self, from: Bound<&[u8]>, to: Bound<&[u8]>) -> Result<Iter>; // key order
+    fn scan(&self, from: Bound<&[u8]>, to: Bound<&[u8]>) -> Result<Iter>; // byte order
     fn apply(&self, batch: Batch, sync: bool) -> Result<()>;      // all or nothing
 }
 ```
 
-Three engines implement it: a `BTreeMap` model, the B-tree and the LSM tree. One test suite decides whether an engine is correct. It runs random operations against the model, and it crashes the engine at every write.
+- **A batch is the only way to write.** It holds puts and deletes. With `sync`, `apply` returns once this batch and every batch before it are durable. After a crash, the store holds a prefix of the batches, each one whole.
+- **A scan sees each key as it is when the scan reaches it.** It is not a snapshot, so no engine has to copy pages or block writers. Snapshots come from `mvcc`.
+- **Keys are up to 512 bytes, and values up to 1 MiB.** The B-tree keeps keys inside its pages, so a page must always hold several of the largest.
+
+Three engines implement it: a `BTreeMap` model that keeps its batches in `wal`, the B-tree and the LSM tree. One test suite decides whether an engine is correct. It runs random operations against the model, and it crashes the engine at every write.
 
 ## 6. B-tree engine: `btree`
 
@@ -287,6 +292,7 @@ waits form a wait-for graph. A cycle is a deadlock, and the youngest transaction
 | serializable (SSI) | snapshot, plus tracking every key and range read. A dangerous read-write cycle aborts one transaction |
 | `SELECT ... FOR UPDATE` | row and range locks, so others can neither change nor insert into what was read |
 
+- **A commit becomes visible** to new snapshots only after its batch is applied. `kv` makes a batch atomic across crashes, but a reader in another thread may see part of a batch while it is being applied.
 - **Timestamps** come from a counter that is saved to disk, so a restart never uses a timestamp again.
 - **Large transactions** write intents (uncommitted versions) while they run, and a transaction record. A reader that finds an intent checks the record. At startup, `mvcc` removes the intents of transactions that did not commit.
 - **Garbage collection** removes versions older than the oldest running snapshot.
@@ -409,4 +415,4 @@ sequenceDiagram
 
 ## Not in scope
 
-Replication and sharding (the next part of the reading list), column storage, foreign keys, triggers, views, `ALTER TABLE`, and query caching. Each of these adds a feature, but none teaches a new fundamental idea.
+Replication and sharding (the next part of the reading list), column storage, foreign keys, triggers, views, `ALTER TABLE`, query caching, keys over 512 bytes and values over 1 MiB. Each of these adds a feature, but none teaches a new fundamental idea.
