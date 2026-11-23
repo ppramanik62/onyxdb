@@ -111,3 +111,17 @@ impl From<vfs::Error> for Error {
         Error::Vfs(e)
     }
 }
+
+// The model engine keeps its batches in a `wal` log. Each of the log's
+// errors has a variant here with the same meaning.
+impl From<wal::Error> for Error {
+    fn from(e: wal::Error) -> Error {
+        match e {
+            wal::Error::Vfs(e) => Error::Vfs(e),
+            wal::Error::Stopped => Error::Stopped,
+            wal::Error::Corrupt { path, reason } => {
+                Error::Corrupt(format!("{}: {reason}", path.display()))
+            }
+        }
+    }
+}
