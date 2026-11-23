@@ -11,6 +11,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kv"
+version = "0.1.0"
+dependencies = [
+ "vfs",
+ "wal",
+]
+
+[[package]]
 name = "pagefile"
 version = "0.1.0"
 dependencies = [

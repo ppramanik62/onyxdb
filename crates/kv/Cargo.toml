@@ -1,0 +1,12 @@
+[package]
+name = "kv"
+version = "0.1.0"
+edition = "2024"
+description = "One ordered key-value interface for every storage engine, a model engine on a BTreeMap and a log, and a test suite that holds any engine to the contract."
+
+[dependencies]
+vfs = { path = "../vfs" }
+wal = { path = "../wal" }
+
+[lints]
+workspace = true
