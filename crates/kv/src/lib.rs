@@ -53,6 +53,8 @@ pub const MAX_KEY: usize = 512;
 /// that one batch needs small and known.
 pub const MAX_VALUE: usize = 1 << 20;
 
+mod batch;
 mod error;
 
+pub use batch::{Batch, Op};
 pub use error::{Error, Result};
