@@ -17,7 +17,7 @@ Each crate has a README with its design, its format and the decisions behind it.
 | [`pagefile`](crates/pagefile) | a file of fixed-size, checksummed pages: slotted pages, a freelist and overflow chains | done |
 | [`bufpool`](crates/bufpool) | a buffer pool: frames, eviction, the write-ahead rule, latches | done |
 | [`wal`](crates/wal) | a write-ahead log: records in blocks, segments, sync, replay, dropping old segments. Group commit and checkpoints come later | part 1 done |
-| `kv` | the ordered key-value trait, a model engine on `BTreeMap` and the log, and a shared test suite | in progress |
+| [`kv`](crates/kv) | the ordered key-value trait, a model engine on `BTreeMap` and the log, and a shared test suite | in progress |
 | `btree` | a B+tree engine, crash-safe through page images in the log | planned |
 | `lsm` | a log-structured merge tree engine | planned |
 | `mvcc` | transactions: snapshots, a lock manager, deadlocks, serializable isolation with phantoms | planned |
