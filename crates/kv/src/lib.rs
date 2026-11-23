@@ -55,6 +55,8 @@ pub const MAX_VALUE: usize = 1 << 20;
 
 mod batch;
 mod error;
+mod kv;
 
 pub use batch::{Batch, Op};
 pub use error::{Error, Result};
+pub use kv::{Iter, Kv, empty_range};
