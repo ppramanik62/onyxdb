@@ -8,10 +8,10 @@
 //! The batch checks every key and value when it takes them. A key longer
 //! than [`MAX_KEY`](crate::MAX_KEY) or a value longer than
 //! [`MAX_VALUE`](crate::MAX_VALUE) is refused at that point, so no engine
-//! ever recieves a batch that breaks the limits, and no engine has to repeat
+//! ever receives a batch that breaks the limits, and no engine has to repeat
 //! the check.
 //!
-//! An engine that keeps its batches in a log, stores each one as the bytes
+//! An engine that keeps its batches in a log stores each one as the bytes
 //! from [`Batch::encode`]. The bytes are the ops, one after another, with no
 //! count in front: the length of the log record ends the batch. All numbers
 //! are little-endian.
@@ -68,7 +68,7 @@ impl Batch {
     /// Makes an empty batch.
     ///
     /// An empty batch writes nothing. Applied with `sync`, it makes every
-    /// batch durable those were applied before it.
+    /// batch applied before it durable.
     ///
     /// # Examples
     ///
@@ -189,7 +189,7 @@ impl Batch {
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::new();
         for op in &self.ops {
-            // The limiits make these casts exact: a key is at most 512 bytes
+            // The limits make these casts exact: a key is at most 512 bytes
             // and a value at most 1 MiB.
             match op {
                 Op::Put(key, value) => {
