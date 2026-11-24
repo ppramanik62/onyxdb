@@ -30,6 +30,25 @@ fn whole_segments_are_dropped() {
 }
 
 #[test]
+fn a_running_replay_survives_drop_before() {
+    let mem = Mem::new();
+    let wal = common::create(&mem);
+    let lsns: Vec<Lsn> = (0..6)
+        .map(|i| wal.append(&common::record(i, BLOCK / 3)).unwrap())
+        .collect();
+    wal.flush_to(u64::MAX).unwrap();
+    let mut replay = wal.replay().unwrap();
+    let first = replay.next().unwrap().unwrap();
+    assert_eq!(common::number(&first.data), Some(0));
+    // Deletes the first two segments, which the replay has not finished.
+    wal.drop_before(lsns[5]).unwrap();
+    let rest: Vec<_> = replay
+        .map(|r| common::number(&r.unwrap().data).unwrap())
+        .collect();
+    assert_eq!(rest, [1, 2, 3, 4, 5]);
+}
+
+#[test]
 fn replay_skips_the_rest_of_a_dropped_record() {
     let mem = Mem::new();
     let wal = common::create(&mem);

@@ -149,8 +149,6 @@ both the LSN of the last whole record.
 - A flipped bit in synced data ends the log silently, because replay stops at
   the first bad fragment.
 - There are no checkpoints yet. The caller decides when to call `drop_before`.
-- Calling `drop_before` while a `Replay` iterator runs can delete a segment
-  that the iterator has not read yet. The iterator then returns an error.
 
 ## Tests and benchmarks
 

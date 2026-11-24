@@ -47,7 +47,7 @@
 //! The reader cannot use the end of a record without its start, so it skips
 //! `middle` and `last` fragments until the first record starts.
 
-use std::{ops::Range, path::Path};
+use std::{marker::PhantomData, ops::Range, path::Path};
 
 use vfs::{File, Open, Vfs};
 
@@ -59,18 +59,16 @@ use crate::{
 
 /// Reads the log's records in order, from the start of its oldest segment
 /// to its valid end.
-pub(crate) struct Reader<'a> {
-    /// The file system the segments are read from.
-    vfs: &'a dyn Vfs,
-    /// The directory that holds the segments.
-    dir: &'a Path,
+pub(crate) struct Reader {
     /// The start of every segment, oldest first.
     segments: Vec<Lsn>,
-    /// The index in `segments` of the segment that `file` has open.
+    /// Every segment, opened when the reader was made, in the same order.
+    /// An open handle keeps working after `drop_before` removes its file,
+    /// so a segment cannot disappear from a reader that is still running.
+    files: Vec<Box<dyn File>>,
+    /// The index in `segments` of the segment the current block is in.
     index: usize,
-    /// The segment the current block is in.
-    file: Box<dyn File>,
-    /// That segment's length, read when it was opened.
+    /// That segment's length, read when the reader reached it.
     len: u64,
     /// The current block's bytes. Shorter than `BLOCK` only where the log's
     /// files end inside the block.
@@ -87,24 +85,26 @@ pub(crate) struct Reader<'a> {
     end: Lsn,
 }
 
-impl<'a> Reader<'a> {
+impl Reader {
     /// A reader at the start of the first of `segments`, with its first
     /// block read.
     ///
     /// # Errors
     ///
-    /// `Error::Vfs` if the first segment cannot be opened or read.
-    pub(crate) fn new(vfs: &'a dyn Vfs, dir: &'a Path, segments: Vec<Lsn>) -> Result<Reader<'a>> {
-        let file = vfs.open(&segment::path(dir, segments[0]), Open::Existing)?;
-        let len = file.len()?;
+    /// `Error::Vfs` if a segment cannot be opened, or the first one cannot
+    /// be read.
+    pub(crate) fn new(vfs: &dyn Vfs, dir: &Path, segments: Vec<Lsn>) -> Result<Reader> {
+        let files = segments
+            .iter()
+            .map(|&start| vfs.open(&segment::path(dir, start), Open::Existing))
+            .collect::<vfs::Result<Vec<_>>>()?;
+        let len = files[0].len()?;
         let mut reader = Reader {
-            vfs,
-            dir,
             block_start: segments[0],
             end: segments[0],
             segments,
+            files,
             index: 0,
-            file,
             len,
             block: Vec::with_capacity(BLOCK),
             at: 0,
@@ -130,15 +130,13 @@ impl<'a> Reader<'a> {
             if next == self.segments.len() || self.segments[next] != self.block_start {
                 return Ok(false);
             }
-            let path = segment::path(self.dir, self.block_start);
-            self.file = self.vfs.open(&path, Open::Existing)?;
-            self.len = self.file.len()?;
+            self.len = self.files[next].len()?;
             self.index = next;
             offset = 0;
         }
         let n = (self.len - offset).min(BLOCK as u64) as usize;
         self.block.resize(n, 0);
-        self.file.read_at(&mut self.block, offset)?;
+        self.files[self.index].read_at(&mut self.block, offset)?;
         self.at = 0;
         Ok(n > 0)
     }
@@ -249,7 +247,9 @@ pub struct Record {
 /// ```
 pub struct Replay<'a> {
     /// Reads the records from the segment files.
-    reader: Reader<'a>,
+    reader: Reader,
+    /// Ties the replay to the log it came from, so it cannot outlive it.
+    log: PhantomData<&'a ()>,
     /// Records with an LSN past this one may not be on disk, so the
     /// iterator does not return them.
     durable: Lsn,
@@ -282,9 +282,10 @@ impl Iterator for Replay<'_> {
 impl<'a> Replay<'a> {
     /// An iterator that returns the records `reader` reads, up to and
     /// including the one whose LSN is `durable`.
-    pub(crate) fn new(reader: Reader<'a>, durable: Lsn) -> Replay<'a> {
+    pub(crate) fn new(reader: Reader, durable: Lsn) -> Replay<'a> {
         Replay {
             reader,
+            log: PhantomData,
             durable,
             done: false,
         }

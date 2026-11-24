@@ -238,15 +238,16 @@ impl Wal {
     /// need.
     ///
     /// The iterator reads the segment files without the log's mutex, so
-    /// other threads can append while it runs. Do not call `drop_before`
-    /// while it runs. `drop_before` may remove a segment that the iterator
-    /// has not read yet, and the iterator then returns [`Error::Vfs`].
+    /// other threads can append while it runs. It opens every segment when
+    /// it is made, and an open file keeps working after it is removed, so
+    /// a [`drop_before`](Wal::drop_before) while it runs takes nothing away
+    /// from it.
     ///
     /// # Errors
     ///
     /// - [`Error::Stopped`] if the log has stopped.
-    /// - [`Error::Vfs`] if the oldest segment cannot be
-    ///   opened or read.
+    /// - [`Error::Vfs`] if a segment cannot be opened, or the oldest one
+    ///   cannot be read.
     ///
     /// # Panics
     ///
