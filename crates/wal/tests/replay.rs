@@ -131,7 +131,7 @@ fn files_that_break_the_rules_are_corrupt() {
 
 #[test]
 fn damaged_logs_never_panic() {
-    for seed in 0..200 {
+    for seed in vfs::seeds(200) {
         let (mem, _) = four_records();
         let mut rng = Rng::new(seed);
         for _ in 0..1 + rng.below(4) {

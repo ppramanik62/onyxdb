@@ -26,7 +26,7 @@ fn outcome<T: std::fmt::Debug>(result: vfs::Result<T>) -> String {
 
 #[test]
 fn disk_and_memory_agree() {
-    for seed in 0..20 {
+    for seed in vfs::seeds(20) {
         let dir = TempDir::new("agree");
         let systems: [Box<dyn Vfs>; 2] = [Box::new(Disk::new(dir.path())), Box::new(Mem::new())];
         run(seed, &systems);

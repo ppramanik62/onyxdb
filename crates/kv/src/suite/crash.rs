@@ -311,8 +311,8 @@ pub fn crashes<E: Engine>(engine: &E, steps: &[Step], seeds: u64) -> Result<u64,
     Ok(checked)
 }
 
-/// Like [`check`](super::check), with crashes: for each seed from 0 to
-/// `seeds - 1`, runs [`crashes`] on `len` generated steps, with 4 seeds for
+/// Like [`check`](super::check), with crashes: for each seed in
+/// [`vfs::seeds(seeds)`](vfs::seeds), runs [`crashes`] on `len` generated steps, with 4 seeds for
 /// each power cut. At the first seed that fails, shrinks its steps.
 ///
 /// # Errors
@@ -336,7 +336,7 @@ pub fn crashes<E: Engine>(engine: &E, steps: &[Step], seeds: u64) -> Result<u64,
 /// check_crashes(&ModelEngine, 2, 10).unwrap();
 /// ```
 pub fn check_crashes<E: Engine>(engine: &E, seeds: u64, len: usize) -> Result<(), Failure> {
-    for seed in 0..seeds {
+    for seed in vfs::seeds(seeds) {
         let steps = generate(seed, len);
         if crashes(engine, &steps, CRASH_SEEDS).is_ok() {
             continue;

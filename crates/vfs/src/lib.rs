@@ -33,4 +33,4 @@ pub use harness::{Failure, Report, crash_test};
 
 pub use mem::Mem;
 
-pub use rng::Rng;
+pub use rng::{Rng, seeds};

@@ -91,7 +91,7 @@ fn reopen_keeps_every_batch() {
 
 #[test]
 fn a_crash_keeps_a_prefix() {
-    for seed in 0..50 {
+    for seed in vfs::seeds(50) {
         let mem = Mem::new();
         let kv = Model::create(Arc::new(mem.clone()), "kv").unwrap();
         kv.apply(puts(&[("a", "1"), ("b", "1")]), false).unwrap();

@@ -85,7 +85,7 @@ fn every_single_bit_flip_is_caught() {
 #[test]
 fn a_torn_header_is_caught() {
     let mut torn = 0;
-    for seed in 0..200 {
+    for seed in vfs::seeds(200) {
         let mem = Mem::new();
         header_file(&mem);
         // Write new user bytes without syncing, then lose power. The crash may

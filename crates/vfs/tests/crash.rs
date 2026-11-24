@@ -16,7 +16,7 @@ fn read_all(vfs: &dyn Vfs, path: &str) -> Vec<u8> {
 
 #[test]
 fn every_byte_is_synced_or_written_later() {
-    for seed in 0..300 {
+    for seed in vfs::seeds(300) {
         let mut rng = Rng::new(seed);
         let mem = Mem::new();
         let file = mem.open(Path::new("f"), Open::CreateNew).unwrap();
@@ -58,7 +58,7 @@ fn every_byte_is_synced_or_written_later() {
 #[test]
 fn a_sector_is_kept_lost_or_torn_from_one_end() {
     let mut seen = BTreeSet::new();
-    for seed in 0..1000 {
+    for seed in vfs::seeds(1000) {
         let mem = Mem::new();
         let file = mem.open(Path::new("f"), Open::CreateNew).unwrap();
         mem.sync_dir(Path::new("")).unwrap();
@@ -92,7 +92,7 @@ fn a_sector_is_kept_lost_or_torn_from_one_end() {
 #[test]
 fn names_survive_in_order() {
     let p = Path::new;
-    for seed in 0..200 {
+    for seed in vfs::seeds(200) {
         let mem = Mem::new();
         mem.open(p("kept"), Open::CreateNew).unwrap();
         mem.sync_dir(p("")).unwrap();
@@ -186,7 +186,7 @@ fn a_replace_survives_only_with_sync_dir() {
         lost > 0,
         "without sync_dir, some crash should lose version 2"
     );
-    for seed in 0..300 {
+    for seed in vfs::seeds(300) {
         assert_eq!(
             config_after_crash(true, seed).as_deref(),
             Some(&b"version 2"[..]),

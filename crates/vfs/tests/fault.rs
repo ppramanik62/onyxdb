@@ -46,7 +46,7 @@ fn a_short_write_writes_the_first_half() {
 
 #[test]
 fn a_failed_sync_loses_the_write_for_good() {
-    for seed in 0..100 {
+    for seed in vfs::seeds(100) {
         let mem = Mem::new();
         let file = file_holding(&mem, b"version 1");
         file.write_at(b"version 2", 0).unwrap();

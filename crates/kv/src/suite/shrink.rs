@@ -153,7 +153,7 @@ impl fmt::Display for Failure {
     }
 }
 
-/// Runs `len` generated steps for each seed from 0 to `seeds - 1`. At the
+/// Runs `len` generated steps for each seed in [`vfs::seeds(seeds)`](vfs::seeds). At the
 /// first seed that fails, shrinks its steps and returns them.
 ///
 /// # Errors
@@ -177,7 +177,7 @@ impl fmt::Display for Failure {
 /// check(&ModelEngine, 5, 100).unwrap();
 /// ```
 pub fn check<E: Engine>(engine: &E, seeds: u64, len: usize) -> Result<(), Failure> {
-    for seed in 0..seeds {
+    for seed in vfs::seeds(seeds) {
         let steps = generate(seed, len);
         if run(engine, &steps).is_ok() {
             continue;

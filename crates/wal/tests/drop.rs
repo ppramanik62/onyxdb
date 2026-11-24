@@ -47,7 +47,7 @@ fn replay_skips_the_rest_of_a_dropped_record() {
 
 #[test]
 fn random_work_matches_a_model() {
-    for seed in 0..50 {
+    for seed in vfs::seeds(50) {
         let mem = Mem::new();
         let mut wal = common::create(&mem);
         let mut rng = Rng::new(seed);

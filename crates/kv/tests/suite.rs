@@ -8,7 +8,7 @@ use kv::suite::{Step, generate, run, threads};
 #[test]
 fn the_model_passes() {
     let mut steps = 0;
-    for seed in 0..100 {
+    for seed in vfs::seeds(100) {
         let generated = generate(seed, 300);
         run(&ModelEngine, &generated).unwrap_or_else(|e| panic!("seed {seed}: {e}"));
         steps += generated.len();

@@ -60,8 +60,9 @@ impl fmt::Display for Report {
 
 /// Crash-tests `workload`. First it runs once with no crash, to count its
 /// changes, and `check` must pass. Then, for each `n` from 0 to that count
-/// and each seed below `seeds`: run on a fresh `Mem` that loses power after
-/// `n` changes, crash it with the seed, and run `check`.
+/// and each seed in [`seeds(seeds)`](crate::seeds): run on a fresh `Mem`
+/// that loses power after `n` changes, crash it with the seed, and run
+/// `check`.
 ///
 /// `workload` gets the file system and the acknowledgements. It records
 /// what it was told is durable in them, and it should stop at the first
@@ -110,8 +111,8 @@ impl fmt::Display for Report {
 /// };
 /// let report = crash_test(5, workload, check);
 /// assert!(report.failures.is_empty(), "{report}");
-/// // 4 changes, so 5 power cuts, each with 5 seeds.
-/// assert_eq!(report.runs, 25);
+/// // 4 changes, so 5 power cuts, each with 5 seeds (more with ONYXDB_SEEDS).
+/// assert_eq!(report.runs, 5 * vfs::seeds(5).end);
 /// ```
 pub fn crash_test<A: Default>(
     seeds: u64,
@@ -133,7 +134,7 @@ pub fn crash_test<A: Default>(
         failures: Vec::new(),
     };
     for changes in 0..=total {
-        for seed in 0..seeds {
+        for seed in crate::seeds(seeds) {
             let mem = Mem::new();
             mem.power_off_after(changes);
             let mut acks = A::default();
