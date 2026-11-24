@@ -15,6 +15,9 @@
 //! nothing that depends on the CPU. The table is slower than the CPU
 //! instruction, about one table lookup per byte. That does not matter here,
 //! because reading a block from disk takes much longer than checking it.
+//!
+//! The same 30 lines are in `pagefile`. They are copied rather than shared,
+//! because the log needs no pages and so depends only on `vfs`.
 
 /// The Castagnoli polynomial 0x1EDC6F41 with its bits reversed, because this
 /// CRC takes the low bit of each byte first.
