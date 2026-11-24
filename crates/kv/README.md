@@ -101,30 +101,6 @@ delete  0      1        3          3+k
         └──────┴────────┴──────────┘
 ```
 
-## Decisions
-
-- **Writes go only through a batch.**
-  Why: "whole or not at all" then has one meaning for every write, and an engine
-  has one write path to make crash-safe.
-  Cost: a single put needs a `Batch` around it.
-- **Keys up to 512 bytes, values up to 1 MiB, checked when the batch takes them.**
-  Why: an engine with 4 KiB pages must fit several of the longest keys in one
-  page, so a full page can always split in two. Checking in the batch means no
-  engine repeats the check.
-  Cost: bigger values have to be split by the caller.
-- **The encoding has no op count.**
-  Why: the log record already says how long the batch is.
-  Cost: a batch can only be decoded from bytes whose end is known.
-- **Scans see no snapshot.**
-  Why: an engine that changes pages in place can keep this promise without
-  copying pages or blocking writers.
-  Cost: code that needs a consistent view of many keys builds it above this
-  trait.
-- **After a failed write, an engine may stop until it is opened again.**
-  Why: the same reason as in `wal`: a retry after a failed `fsync` can report
-  lost data as saved.
-  Cost: one failed write stops all writes.
-
 ## Known gaps
 
 - `Model` never removes old log records, so opening it replays every batch it

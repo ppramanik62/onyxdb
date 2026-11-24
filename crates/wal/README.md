@@ -141,80 +141,13 @@ replay: every record up to `durable`, oldest first
 After `open`, every record in the log is durable, and `end` and `durable` are
 both the LSN of the last whole record.
 
-## Decisions
-
-- **LevelDB's format: 32 KiB blocks, records cut into fragments, a CRC-32C on
-  each fragment.**
-  Why: a reader can always start at a block boundary, and the block boundaries
-  come from arithmetic, so damage cannot move them. The kind of each fragment
-  shows whether a record is whole.
-  Cost: 7 bytes per fragment, and up to 6 bytes of trailer per block.
-- **The CRC covers the length and the kind as well as the data.**
-  Why: a crash can tear the length field. A reader that trusts a wrong length
-  reads the wrong bytes, and the CRC catches this.
-  Cost: none. LevelDB also masks its stored CRC. The log never computes a CRC
-  over a stored CRC of the same bytes, so it does not mask.
-- **A record's LSN is the position just past its last byte.**
-  Why: every record has at least a 7-byte header, so no record has LSN 0, and 0
-  can mean "never logged".
-  Cost: none.
-- **Segments are named by the LSN where they start.**
-  Why: `open` can check that the segments form one continuous run, and it can
-  find the oldest segment without reading any file. `open` does not need the
-  segment size the log was written with.
-  Cost: a file name holds 16 hex digits.
-- **A full segment is synced, and the directory too, before the next segment is
-  created.**
-  Why: otherwise a crash could keep records in the new segment and lose earlier
-  records in the old one. Replay stops at that gap, so the later records would
-  be lost even though the log reported them as saved.
-  Cost: two syncs each time a segment fills.
-- **Records go straight into the page cache with `write_at`. The log has no
-  buffer of its own.**
-  Why: the page cache is already a buffer.
-  Cost: one system call per record.
-- **One mutex protects the whole state, and the log holds it during a sync.**
-  Why: this is simple and correct.
-  Cost: every commit waits for a sync of its own, about 2,000 commits per second
-  on the machine in `benches/baseline.txt`. 8 threads are no faster than 1.
-- **After a failed write or sync, the log stops, and every call returns
-  `Stopped` until the log is opened again.**
-  Why: on Linux, a failed `fsync` drops the unsaved writes, and the next
-  `fsync` succeeds. A retry would report lost data as saved. Opening the log
-  reads back what is really on the disk.
-  Cost: one failed sync stops the log until the caller opens it again.
-- **Replay stops at the first bad fragment, even when valid records come after
-  it.**
-  Why: records after a damaged record are newer. Returning them without the
-  damaged record would break the order the log promises.
-  Cost: a flipped bit inside synced data ends the log there, and nothing reports
-  it.
-- **`open` cuts the log at the valid end, and writes the rest of the last
-  segment again before it syncs.**
-  Why: the bytes after the valid end could form an old record that the next
-  append does not overwrite, and replay would return it. Writing the tail again
-  makes its pages dirty, so the sync puts them on disk even after a failed
-  `fsync` marked them clean.
-  Cost: `open` reads the whole log, and writes up to one segment. Replay then
-  reads the log a second time.
-- **`drop_before` deletes whole segments, oldest first, with one directory sync
-  at the end.**
-  Why: a file system cannot remove the start of a file. Removing the oldest
-  segment first means a crash leaves one continuous run of segments.
-  Cost: replay may still return some records older than the LSN given to
-  `drop_before`, and the caller skips them. The LSN must be one that `append` or
-  `end` returned.
-- **The CRC-32C code is copied from `pagefile`, not used from it.**
-  Why: the log does not need pages, so it depends only on `vfs`.
-  Cost: two copies of 30 lines.
-
 ## Known gaps
 
 - Every commit has its own `fsync`, so threads that commit at the same time
   wait for the disk one after another. Group commit would let them share one
   sync.
-- A flipped bit in synced data ends the log silently, as the replay decision
-  says.
+- A flipped bit in synced data ends the log silently, because replay stops at
+  the first bad fragment.
 - There are no checkpoints yet. The caller decides when to call `drop_before`.
 - Calling `drop_before` while a `Replay` iterator runs can delete a segment
   that the iterator has not read yet. The iterator then returns an error.

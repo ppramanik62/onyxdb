@@ -112,31 +112,6 @@ To run a failure again, run the workload on a new `Mem` after
 | locks | released |
 | handles opened before the crash | return `Error::Stale` |
 
-## Decisions
-
-- **Trait objects, not generics.**
-  Why: a generic `PageFile<F: File>` would add a type parameter to every crate
-  above this one.
-  Cost: one indirect call per I/O. A system call costs far more.
-- **Positioned I/O only, and reads are exact.**
-  Why: a database reads and writes whole pages at known offsets. It never wants
-  half a page.
-  Cost: no streaming reads. A caller asks for `len` before it reads a whole
-  file.
-- **Relative paths, and renames only inside one directory.**
-  Why: a path names the same file in `Disk` and in `Mem`. Replacing a file needs
-  only one `sync_dir`.
-  Cost: a file cannot move to another directory.
-- **Our own `Error`, with the operation and the path.**
-  Why: "write data/pages.pf: No space left on device" says what to fix.
-  Cost: a bigger enum than `io::Error`.
-- **One exclusive lock, and `try_lock` never waits.**
-  Why: one process owns a database.
-  Cost: no shared locks.
-- **Seeded crashes.**
-  Why: the same change count and seed give the same failure every time.
-  Cost: the crash model must be written down exactly.
-
 Not supported: memory-mapped files, shared locks, Windows, and async I/O.
 
 ## Tests and examples
