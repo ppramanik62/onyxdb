@@ -28,6 +28,7 @@ some prefix of the applied batches, which includes every batch applied with
 | engine | a type that implements `Kv` |
 | applied | `apply` returned `Ok`. Every later read sees the batch |
 | synced | applied with `sync` set. The batch survives a crash |
+| model | `Model`, the engine every other engine is checked against |
 
 ## The public API
 
@@ -107,8 +108,6 @@ delete  0      1        3          3+k
   ever applied. Fine for tests, wrong for real data.
 - The crash checks are slow: every change to the files is one power cut, crashed
   with several seeds, so tests use short step lists.
-- `lib.rs` keeps its own docs, so this README is not yet the crate's front page
-  in `cargo doc`, and the example above does not run as a doctest.
 
 ## Tests
 
