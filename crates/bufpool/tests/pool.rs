@@ -84,3 +84,29 @@ fn the_pool_makes_its_policy_for_its_own_frames() {
         pool.fetch(no(n)).unwrap();
     }
 }
+
+#[test]
+fn every_fetch_checks_the_page_count() {
+    let mem = Mem::new();
+    let pool = pool(&mem, 3, 2);
+    // Pages 1 to 3 exist, so the page count is 4.
+    for result in [
+        pool.fetch(no(4)).map(|_| ()),
+        pool.fetch_mut(no(9)).map(|_| ()),
+    ] {
+        assert!(
+            matches!(
+                result,
+                Err(Error::PageFile(pagefile::Error::OutOfRange {
+                    count: 4,
+                    ..
+                }))
+            ),
+            "{result:?}"
+        );
+    }
+    // A page that the pool allocates can be fetched at once.
+    let n = pagefile::freelist::allocate(&mut &pool).unwrap();
+    assert_eq!(n, no(4));
+    pool.fetch(n).unwrap();
+}

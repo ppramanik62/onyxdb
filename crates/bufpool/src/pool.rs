@@ -63,7 +63,10 @@
 
 use std::{
     ops::{Deref, DerefMut},
-    sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard},
+    sync::{
+        Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
+        atomic::{AtomicU32, Ordering},
+    },
 };
 
 use pagefile::{Header, Page, PageFile, PageNo, PageStore};
@@ -124,6 +127,12 @@ pub struct BufPool {
     /// also stored as a decoded `Header`, so no reader has to decode its
     /// bytes again.
     pub(crate) header: RwLock<Header>,
+    /// The header's page count, copied out of it whenever a [`HeaderMut`]
+    /// is dropped. Every fetch checks its page number against this copy, so
+    /// a hit needs no latch on the header.
+    ///
+    /// [`HeaderMut`]: crate::HeaderMut
+    pub(crate) page_count: AtomicU32,
     /// Called before a page is written, to keep the write-ahead rule.
     pub(crate) log: Box<dyn LogHook>,
 }
@@ -241,6 +250,7 @@ impl BufPool {
                 stats: Stats::default(),
                 header_dirty: false,
             }),
+            page_count: AtomicU32::new(header.page_count),
             header: RwLock::new(header),
             log,
         }
@@ -303,9 +313,23 @@ impl BufPool {
     ///
     /// # Errors
     ///
-    /// [`Error::AllPinned`] if no frame can be emptied, and any error from
-    /// writing back the victim or reading page `n`.
+    /// [`Error::PageFile`] holding [`pagefile::Error::OutOfRange`] if `n` is
+    /// at or past the page count, [`Error::AllPinned`] if no frame can be
+    /// emptied, and any error from writing back the victim or reading page
+    /// `n`.
     pub(crate) fn pin(&self, n: PageNo, read: bool) -> Result<Pinned<'_>> {
+        // Every way to reach a page comes through here, so this is the one
+        // place that checks the page count. The freelist raises the count
+        // before it writes a new page, so a page past it was never allocated,
+        // and writing one would make the file longer than its header says.
+        let count = self.page_count.load(Ordering::Acquire);
+        if n.get() >= count {
+            let e = pagefile::Error::OutOfRange {
+                page: n.get(),
+                count,
+            };
+            return Err(e.into());
+        }
         let mut state = self.lock();
         loop {
             if let Some(frame) = state.table.get(n) {
@@ -441,6 +465,8 @@ impl BufPool {
     ///
     /// - [`Error::AllPinned`] if the page has to be loaded and every frame
     ///   holds a pinned page.
+    /// - [`Error::PageFile`] holding [`pagefile::Error::OutOfRange`] if `n` is
+    ///   at or past the page count in the pool's header.
     /// - [`Error::PageFile`] if reading the page fails or its checksum is
     ///   wrong, or if writing back the evicted page fails.
     /// - [`Error::Log`] if the log cannot be made durable before that write.

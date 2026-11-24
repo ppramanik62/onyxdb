@@ -26,7 +26,10 @@
 
 use std::{
     ops::{Deref, DerefMut},
-    sync::{RwLockReadGuard, RwLockWriteGuard},
+    sync::{
+        RwLockReadGuard, RwLockWriteGuard,
+        atomic::{AtomicU32, Ordering},
+    },
 };
 
 use pagefile::{Header, Page, PageNo, PageStore};
@@ -46,7 +49,13 @@ pub struct HeaderRef<'a>(RwLockReadGuard<'a, Header>);
 /// It holds the header's exclusive latch, so no other thread can read or
 /// change the header until this is dropped. The header was marked dirty
 /// when this was made, so the next [`flush`](BufPool::flush) writes it.
-pub struct HeaderMut<'a>(RwLockWriteGuard<'a, Header>);
+/// Dropping it gives the pool the header's new page count.
+pub struct HeaderMut<'a> {
+    /// The header's exclusive latch.
+    latch: RwLockWriteGuard<'a, Header>,
+    /// The pool's copy of the page count, set again on drop.
+    page_count: &'a AtomicU32,
+}
 
 impl BufPool {
     /// The pool's copy of the header, for reading. It can be ahead of the
@@ -130,7 +139,10 @@ impl BufPool {
             .expect("a thread panicked while changing the header");
         // Set while the exclusive latch is held, like a page's dirty flag.
         self.lock().header_dirty = true;
-        HeaderMut(latch)
+        HeaderMut {
+            latch,
+            page_count: &self.page_count,
+        }
     }
 }
 
@@ -146,13 +158,22 @@ impl Deref for HeaderMut<'_> {
     type Target = Header;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.latch
     }
 }
 
 impl DerefMut for HeaderMut<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+        &mut self.latch
+    }
+}
+
+impl Drop for HeaderMut<'_> {
+    fn drop(&mut self) {
+        // Stored while the latch is still held, so a thread that sees the
+        // new count also sees the header that has it.
+        self.page_count
+            .store(self.latch.page_count, Ordering::Release);
     }
 }
 
@@ -254,33 +275,6 @@ impl BufPool {
             self.unpin(frame);
         }
     }
-    /// Checks that page `n` is below the page count in the pool's header.
-    ///
-    /// `PageStore` promises this check, and the freelist depends on it. The
-    /// freelist raises the page count before it writes a new page, so a page
-    /// at or past the count was never allocated. Reading such a page means a
-    /// link is damaged. Writing one would make the file longer without the
-    /// header counting the new page.
-    ///
-    /// `fetch` does not do this check. Most callers already know that the
-    /// page exists, and the check would make every fetch take the header's
-    /// latch.
-    ///
-    /// # Errors
-    ///
-    /// [`Error::PageFile`] holding [`pagefile::Error::OutOfRange`] if `n` is
-    /// at or past the page count.
-    fn check(&self, n: PageNo) -> Result<()> {
-        let count = self.header().page_count;
-        if n.get() >= count {
-            let e = pagefile::Error::OutOfRange {
-                page: n.get(),
-                count,
-            };
-            return Err(e.into());
-        }
-        Ok(())
-    }
 }
 
 /// The pool as a [`PageStore`], so the freelist and overflow functions in
@@ -338,14 +332,12 @@ impl PageStore for &BufPool {
     }
 
     fn read(&self, n: PageNo, page: &mut Page) -> Result<()> {
-        self.check(n)?;
         let frame = self.fetch(n)?;
         page.bytes_mut().copy_from_slice(frame.bytes());
         Ok(())
     }
 
     fn write(&mut self, n: PageNo, page: &mut Page) -> Result<()> {
-        self.check(n)?;
         let mut frame = self.overwrite(n)?;
         frame.bytes_mut().copy_from_slice(page.bytes());
         Ok(())
