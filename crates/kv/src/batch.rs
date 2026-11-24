@@ -239,13 +239,13 @@ impl Batch {
                     "batch: op at byte {start} has kind {kind}, which is neither 1 (put) nor 2 (delete)"
                 )));
             }
-            let len = u16::from_le_bytes(take(bytes, &mut at, 2)?.try_into().unwrap());
+            let len = u16::from_le_bytes(take_array(bytes, &mut at)?);
             let key = take(bytes, &mut at, len as usize)?.to_vec();
             // A key or value over the limit means the bytes did not come
             // from `encode`, so it is corruption, not bad input.
             let corrupt = |e: Error| Error::Corrupt(format!("batch: op at byte {start}: {e}"));
             if kind == PUT {
-                let len = u32::from_le_bytes(take(bytes, &mut at, 4)?.try_into().unwrap());
+                let len = u32::from_le_bytes(take_array(bytes, &mut at)?);
                 let value = take(bytes, &mut at, len as usize)?.to_vec();
                 batch.put(key, value).map_err(corrupt)?;
             } else {
@@ -254,6 +254,14 @@ impl Batch {
         }
         Ok(batch)
     }
+}
+
+/// Returns the `N` bytes at `*at` as an array, for a number field, and moves
+/// `*at` past them, or an error if fewer than `N` bytes are left.
+fn take_array<const N: usize>(bytes: &[u8], at: &mut usize) -> Result<[u8; N]> {
+    let mut array = [0; N];
+    array.copy_from_slice(take(bytes, at, N)?);
+    Ok(array)
 }
 
 /// Returns the `n` bytes at `*at` and moves `*at` past them, or an error if

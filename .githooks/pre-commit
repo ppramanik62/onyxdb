@@ -1,0 +1,4 @@
+#!/bin/sh
+# Runs the fast checks before every commit. Turn it on once per clone with
+#     git config core.hooksPath .githooks
+exec scripts/check.sh --quick

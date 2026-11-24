@@ -2,6 +2,8 @@
 
 // Every test file compiles this module, but each uses only some of it.
 #![allow(dead_code)]
+// These helpers make and delete real directories for the `Disk` tests.
+#![allow(clippy::disallowed_methods)]
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};

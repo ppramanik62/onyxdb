@@ -3,6 +3,8 @@
 // `unsafe`.
 #![warn(missing_docs)]
 #![forbid(unsafe_code)]
+// This crate is the one place that talks to the real file system.
+#![allow(clippy::disallowed_types, clippy::disallowed_methods)]
 
 pub mod crash;
 

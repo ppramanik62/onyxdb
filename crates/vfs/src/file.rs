@@ -111,6 +111,11 @@ pub trait Vfs: Send + Sync {
 
     /// Whether a file or directory exists at `path`. The empty path, the
     /// root, always exists.
+    ///
+    /// # Errors
+    ///
+    /// Any error from the file system other than a missing file, such as a
+    /// permission problem on a parent directory.
     fn exists(&self, path: &Path) -> Result<bool>;
 
     /// Removes the file at `path`. Handles already open keep working. The
@@ -238,15 +243,28 @@ pub trait File: Send + Sync {
     fn write_at(&self, buf: &[u8], offset: u64) -> Result<()>;
 
     /// The file's length, in bytes, including writes that are not synced yet.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Stale`](crate::Error::Stale) if a crash came after this
+    /// handle was opened, or any error from the file system.
     fn len(&self) -> Result<u64>;
 
     /// Whether the file's length is 0.
+    ///
+    /// # Errors
+    ///
+    /// The same errors as [`File::len`].
     fn is_empty(&self) -> Result<bool> {
         Ok(self.len()? == 0)
     }
 
     /// Cuts the file to `len` bytes, or makes it longer with zeros. Like a
     /// write, it is not durable until `sync`.
+    ///
+    /// # Errors
+    ///
+    /// Any error from the file system. The length is then unknown.
     fn set_len(&self, len: u64) -> Result<()>;
 
     /// Waits until every write and `set_len` on this file so far is on the

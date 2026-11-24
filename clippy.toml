@@ -1,0 +1,21 @@
+# Every file operation goes through `vfs`, so tests can crash it and fail its
+# `fsync`. Only `vfs` itself, and test helpers that clean up the real disk, may
+# use `std::fs`, each with an `#[allow]` that says why.
+disallowed-types = [
+    { path = "std::fs::File", reason = "open files through vfs::Vfs" },
+    { path = "std::fs::OpenOptions", reason = "open files through vfs::Vfs" },
+]
+disallowed-methods = [
+    { path = "std::fs::read", reason = "use vfs" },
+    { path = "std::fs::write", reason = "use vfs" },
+    { path = "std::fs::read_dir", reason = "use vfs::Vfs::list" },
+    { path = "std::fs::create_dir", reason = "use vfs::Vfs::create_dir" },
+    { path = "std::fs::create_dir_all", reason = "use vfs" },
+    { path = "std::fs::remove_file", reason = "use vfs::Vfs::remove" },
+    { path = "std::fs::remove_dir", reason = "use vfs" },
+    { path = "std::fs::remove_dir_all", reason = "use vfs" },
+    { path = "std::fs::rename", reason = "use vfs::Vfs::rename" },
+    { path = "std::fs::copy", reason = "use vfs" },
+    { path = "std::fs::metadata", reason = "use vfs" },
+    { path = "std::fs::exists", reason = "use vfs::Vfs::exists" },
+]

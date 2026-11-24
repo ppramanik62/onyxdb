@@ -72,8 +72,9 @@ pub fn check(file: &PageFile) -> Result<Report> {
     let mut page = file.new_page();
     let mut free_pages = BTreeSet::new();
 
-    for number in 1..file.page_count() {
-        let n = PageNo::new(number).expect("the loop starts at page 1");
+    // Page 0 is the header, so every number in the range is a valid `PageNo`.
+    for n in (1..file.page_count()).filter_map(PageNo::new) {
+        let number = n.get();
         match file.read(n, &mut page) {
             Ok(()) => {}
             Err(Error::Vfs(e)) => return Err(Error::Vfs(e)),

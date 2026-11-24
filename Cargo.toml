@@ -9,6 +9,8 @@ missing_docs = "warn"
 [workspace.lints.clippy]
 dbg_macro = "warn"
 todo = "warn"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
 
 [workspace.dependencies]
 vfs = { path = "crates/vfs" }

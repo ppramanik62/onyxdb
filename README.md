@@ -139,13 +139,12 @@ here.
 ## Build and test
 
 ```text
-cargo test
-cargo clippy --all-targets -- -D warnings
-cargo fmt --check
+scripts/check.sh                       std only, fmt, clippy, docs, tests
+git config core.hooksPath .githooks    run the fast checks before each commit
 cargo doc --open
 ```
 
-`rust-toolchain.toml` pins the compiler version. CI runs the same checks on
+`rust-toolchain.toml` pins the compiler version. CI runs `scripts/check.sh` on
 every push.
 
 ## License

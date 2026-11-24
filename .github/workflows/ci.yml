@@ -11,6 +11,4 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
         run: rustup show
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings -A unused-variables
-      - run: cargo test
+      - run: scripts/check.sh

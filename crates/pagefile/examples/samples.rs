@@ -9,6 +9,9 @@ use pagefile::overflow::write_chain;
 use pagefile::{PageFile, PageNo, PageStore, Result, Slotted, freelist};
 use vfs::{Disk, Open, Vfs};
 
+// This example writes sample files for people to open with the `pagefile`
+// command, so it replaces them on the real disk.
+#[allow(clippy::disallowed_methods)]
 fn main() -> Result<()> {
     let dir = std::env::args().nth(1).expect("usage: samples DIR");
     let dir = Path::new(&dir);

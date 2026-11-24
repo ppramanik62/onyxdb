@@ -57,6 +57,11 @@ impl BufPool {
     /// Blocks while a [`HeaderMut`] lives. A thread that holds one and calls
     /// this waits forever.
     ///
+    /// # Panics
+    ///
+    /// Panics if a thread panicked while it held the header's latch, because
+    /// the header may then be half changed.
+    ///
     /// # Examples
     ///
     /// ```
@@ -94,6 +99,12 @@ impl BufPool {
     ///
     /// Blocks while any [`HeaderRef`] or other `HeaderMut` lives. A thread
     /// that holds one and calls this waits forever.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a thread panicked while it held the header's latch or the
+    /// pool's mutex, because the header or the pool's state may then be
+    /// half changed.
     ///
     /// # Examples
     ///
