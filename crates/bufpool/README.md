@@ -136,7 +136,16 @@ cargo run --release -p bufpool --example hitrate   hit rates of CLOCK, LRU and L
 | `tests/threads.rs` | 8 threads against a model, threads that miss one page share one read, a failed read fails every waiting thread, and a page that is being written back can still be fetched |
 
 `benches/pool.rs` prints fetches per second for hits and misses, with 1 and 8
-threads. Save the first run to `benches/baseline.txt`, and compare later runs
-with it.
+threads, on a file system in memory. The baseline is saved in
+`benches/baseline.txt`, with the machine it ran on:
+
+```text
+# 2026-11-24 · Intel Core i5-13500H, 16 threads · WD SN740 NVMe, btrfs · rustc 1.98.1
+4 KiB pages, 400000 random fetches per thread, CLOCK, in memory
+hits,   1 thread(s):   17942656 fetches/s
+misses, 1 thread(s):     140739 fetches/s
+hits,   8 thread(s):    2303075 fetches/s
+misses, 8 thread(s):     867954 fetches/s
+```
 
 The references behind this crate are in [engineering-notes](https://github.com/PPRAMANIK62/engineering-notes/blob/main/database-references/README.md#buffer-manager).

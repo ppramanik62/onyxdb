@@ -1,3 +1,4 @@
-append, not synced   1 thread      866803 records/s
-commit               1 thread        1960 commits/s
-commit               8 threads       2046 commits/s
+# 2026-11-24 · Intel Core i5-13500H, 16 threads · WD SN740 NVMe, btrfs · rustc 1.98.1
+append, not synced   1 thread     1006496 records/s
+commit               1 thread        1974 commits/s
+commit               8 threads       2022 commits/s

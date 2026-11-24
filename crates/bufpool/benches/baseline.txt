@@ -1,0 +1,7 @@
+# 2026-11-24 · Intel Core i5-13500H, 16 threads · WD SN740 NVMe, btrfs · rustc 1.98.1
+4 KiB pages, 400000 random fetches per thread, CLOCK, in memory
+hits,   1 thread(s):   17942656 fetches/s
+misses, 1 thread(s):     140739 fetches/s
+hits,   8 thread(s):    2303075 fetches/s
+misses, 8 thread(s):     867954 fetches/s
+Stats { hits: 57745, misses: 3542255, evictions: 3542239, writes: 0 }

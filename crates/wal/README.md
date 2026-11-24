@@ -172,12 +172,13 @@ cargo run --release -p wal --example hole     a failed sync, in a plain file and
 
 `benches/wal.rs` prints records appended per second without a sync, and commits
 per second with 1 and 8 threads. It runs on the real disk under `target/`. The
-first run is saved in `benches/baseline.txt`:
+baseline is saved in `benches/baseline.txt`, with the machine it ran on:
 
 ```text
-append, not synced   1 thread      866803 records/s
-commit               1 thread        1960 commits/s
-commit               8 threads       2046 commits/s
+# 2026-11-24 · Intel Core i5-13500H, 16 threads · WD SN740 NVMe, btrfs · rustc 1.98.1
+append, not synced   1 thread     1006496 records/s
+commit               1 thread        1974 commits/s
+commit               8 threads       2022 commits/s
 ```
 
 The references behind this crate are in [engineering-notes](https://github.com/PPRAMANIK62/engineering-notes/blob/main/database-references/README.md#write-ahead-log).
