@@ -47,7 +47,7 @@ fn make_file(mem: &Mem, pages: u32) {
 fn hit_rate(
     mem: &Mem,
     frames: usize,
-    policy: Box<dyn Policy>,
+    policy: MakePolicy,
     warm: usize,
     measured: usize,
     mut next: impl FnMut() -> u32,
@@ -113,16 +113,7 @@ fn main() {
         let mut rates = Vec::new();
         for (_, make) in policies() {
             let total: f64 = (1..=SEEDS)
-                .map(|seed| {
-                    hit_rate(
-                        &mem,
-                        frames,
-                        make(frames),
-                        1000,
-                        3000,
-                        two_pool(seed, false),
-                    )
-                })
+                .map(|seed| hit_rate(&mem, frames, make, 1000, 3000, two_pool(seed, false)))
                 .sum();
             rates.push(total / SEEDS as f64);
         }
@@ -149,7 +140,7 @@ fn main() {
                         1 + N1 + scan
                     }
                 };
-                hit_rate(&mem, 120, make(120), 20_000, 20_000, next)
+                hit_rate(&mem, 120, make, 20_000, 20_000, next)
             })
             .sum();
         println!(
@@ -163,10 +154,10 @@ fn main() {
     println!("   Hit rates count both fetches, so every second fetch is a hit.");
     for (name, make) in policies() {
         let once: f64 = (1..=SEEDS)
-            .map(|seed| hit_rate(&mem, 100, make(100), 1000, 3000, two_pool(seed, false)))
+            .map(|seed| hit_rate(&mem, 100, make, 1000, 3000, two_pool(seed, false)))
             .sum();
         let twice: f64 = (1..=SEEDS)
-            .map(|seed| hit_rate(&mem, 100, make(100), 2000, 6000, two_pool(seed, true)))
+            .map(|seed| hit_rate(&mem, 100, make, 2000, 6000, two_pool(seed, true)))
             .sum();
         println!(
             "   {name:<6} once {:.3}   twice {:.3}, or {:.3} on the first fetch of each pair",

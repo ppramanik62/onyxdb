@@ -24,7 +24,7 @@ fn pool(mem: &Mem, pages: u32, frames: usize) -> BufPool {
         let n = freelist::allocate(&mut file).unwrap();
         file.write(n, &mut page).unwrap();
     }
-    BufPool::new(file, frames, Box::new(Clock::new(frames)), Box::new(NoLog))
+    BufPool::new(file, frames, Clock::new, Box::new(NoLog))
 }
 
 /// Runs `threads` threads that each fetch `FETCHES` random pages from

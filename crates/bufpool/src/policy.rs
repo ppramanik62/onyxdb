@@ -83,6 +83,22 @@ pub trait Policy: Send {
     fn forget(&mut self, frame: usize);
 }
 
+/// A boxed policy is a policy, so code that chooses its policy while it
+/// runs can hand the pool a `Box<dyn Policy>`.
+impl<P: Policy + ?Sized> Policy for Box<P> {
+    fn touch(&mut self, frame: usize, page: PageNo) {
+        (**self).touch(frame, page);
+    }
+
+    fn victim(&mut self, evictable: &dyn Fn(usize) -> bool) -> Option<usize> {
+        (**self).victim(evictable)
+    }
+
+    fn forget(&mut self, frame: usize) {
+        (**self).forget(frame);
+    }
+}
+
 /// The highest a frame's usage count goes. PostgreSQL uses the same cap,
 /// `BM_MAX_USAGE_COUNT` in its `buf_internals.h`. A cap of 1 makes this the
 /// classic CLOCK with one reference bit per frame.

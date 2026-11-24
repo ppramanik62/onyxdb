@@ -130,12 +130,7 @@ impl LogHook for SlowLog {
 #[test]
 fn a_victim_being_written_can_still_be_fetched() {
     let mem = Mem::new();
-    let pool = BufPool::new(
-        file_with(&mem, 10),
-        2,
-        Box::new(Clock::new(2)),
-        Box::new(SlowLog),
-    );
+    let pool = BufPool::new(file_with(&mem, 10), 2, Clock::new, Box::new(SlowLog));
     {
         let mut one = pool.fetch_mut(no(1)).unwrap();
         one.put_u32(STAMP, 100);

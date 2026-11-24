@@ -16,7 +16,7 @@ use vfs::{Mem, Rng, crash_test};
 fn the_freelist_and_overflow_chains_run_through_the_pool() {
     let mem = Mem::new();
     let file = PageFile::create(&mem, "test.pf", 512).unwrap();
-    let pool = BufPool::new(file, 3, Box::new(Clock::new(3)), Box::new(NoLog));
+    let pool = BufPool::new(file, 3, Clock::new, Box::new(NoLog));
     let mut store = &pool;
 
     // Ten pages, more than the pool has frames, each with its own stamp.
@@ -57,7 +57,7 @@ fn random_operations_match_the_model() {
         let mut rng = Rng::new(seed);
         let mem = Mem::new();
         let file = PageFile::create(&mem, "test.pf", 512).unwrap();
-        let mut pool = BufPool::new(file, 3, Box::new(Clock::new(3)), Box::new(NoLog));
+        let mut pool = BufPool::new(file, 3, Clock::new, Box::new(NoLog));
         // The stamp of every page in use. Freed pages leave the map.
         let mut model: HashMap<PageNo, u32> = HashMap::new();
         for step in 0..500 {
@@ -93,7 +93,7 @@ fn random_operations_match_the_model() {
                     pool.flush().unwrap();
                     drop(pool);
                     let file = PageFile::open(&mem, "test.pf").unwrap();
-                    pool = BufPool::new(file, 3, Box::new(Clock::new(3)), Box::new(NoLog));
+                    pool = BufPool::new(file, 3, Clock::new, Box::new(NoLog));
                 }
                 // Read a page and compare it with the model.
                 _ if !model.is_empty() => {
@@ -221,7 +221,7 @@ fn op<T>(result: bufpool::Result<T>) -> vfs::Result<T> {
 fn workload(mem: &Mem, acks: &mut Acks) -> vfs::Result<()> {
     let file = op(PageFile::create(mem, "c.pf", 512).map_err(Into::into))?;
     acks.created = true;
-    let pool = BufPool::new(file, 2, Box::new(Clock::new(2)), Box::new(NoLog));
+    let pool = BufPool::new(file, 2, Clock::new, Box::new(NoLog));
     let mut store = &pool;
     for round in 0..2 {
         let mut stamped = Vec::new();

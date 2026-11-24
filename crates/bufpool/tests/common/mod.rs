@@ -33,5 +33,5 @@ pub fn file_with(mem: &Mem, pages: u32) -> PageFile {
 /// of `pages` pages.
 pub fn pool(mem: &Mem, pages: u32, frames: usize) -> BufPool {
     let file = file_with(mem, pages);
-    BufPool::new(file, frames, Box::new(Clock::new(frames)), Box::new(NoLog))
+    BufPool::new(file, frames, Clock::new, Box::new(NoLog))
 }

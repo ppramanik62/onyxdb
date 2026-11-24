@@ -60,12 +60,7 @@ fn no_page_reaches_the_file_before_its_log() {
             durable: durable.clone(),
             calls: AtomicU64::new(0),
         };
-        let pool = BufPool::new(
-            file_with(&mem, 30),
-            4,
-            Box::new(Clock::new(4)),
-            Box::new(log),
-        );
+        let pool = BufPool::new(file_with(&mem, 30), 4, Clock::new, Box::new(log));
         let mut lsn = 0;
         for _ in 0..500 {
             let n = no(1 + rng.below(30) as u32);

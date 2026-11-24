@@ -96,7 +96,7 @@ use crate::{Error, LogHook, PageTable, Policy, Result};
 /// #     file.write(n, &mut file.new_page()).unwrap();
 /// # }
 /// // A page file with pages 1 to 3, and a pool of 2 frames in front of it.
-/// let pool = BufPool::new(file, 2, Box::new(Clock::new(2)), Box::new(NoLog));
+/// let pool = BufPool::new(file, 2, Clock::new, Box::new(NoLog));
 /// let one = PageNo::new(1).unwrap();
 /// let page = pool.fetch(one).unwrap();
 /// assert_eq!(page.number(), one);
@@ -205,8 +205,9 @@ impl BufPool {
     /// Makes a pool of `frames` frames in front of `file`. Every frame
     /// starts empty.
     ///
-    /// `policy` picks the frames to empty, and must be made for the same
-    /// number of frames. `log` is called before every page write, to keep
+    /// `policy` makes the policy that picks the frames to empty. The pool
+    /// calls it once, with `frames`, so the policy always fits the pool;
+    /// `Clock::new` works as it is. `log` is called before every page write, to keep
     /// the write-ahead rule. The pool copies the file's header and keeps
     /// its own copy from then on.
     ///
@@ -216,10 +217,10 @@ impl BufPool {
     /// # Panics
     ///
     /// Panics if `frames` is 0.
-    pub fn new(
+    pub fn new<P: Policy + 'static>(
         file: PageFile,
         frames: usize,
-        policy: Box<dyn Policy>,
+        policy: impl FnOnce(usize) -> P,
         log: Box<dyn LogHook>,
     ) -> BufPool {
         assert!(frames > 0, "a pool needs at least one frame");
@@ -236,7 +237,7 @@ impl BufPool {
                 meta: vec![Meta::EMPTY; frames],
                 // Reversed, so that `pop` returns frame 0 first.
                 empty: (0..frames).rev().collect(),
-                policy,
+                policy: Box::new(policy(frames)),
                 stats: Stats::default(),
                 header_dirty: false,
             }),
@@ -464,7 +465,7 @@ impl BufPool {
     /// #     file.write(n, &mut file.new_page()).unwrap();
     /// # }
     /// // A page file with pages 1 to 3, and a pool of 2 frames in front of it.
-    /// let pool = BufPool::new(file, 2, Box::new(Clock::new(2)), Box::new(NoLog));
+    /// let pool = BufPool::new(file, 2, Clock::new, Box::new(NoLog));
     /// let one = PageNo::new(1).unwrap();
     /// let two = PageNo::new(2).unwrap();
     /// let three = PageNo::new(3).unwrap();
@@ -586,7 +587,7 @@ impl BufPool {
     /// #     file.write(n, &mut file.new_page()).unwrap();
     /// # }
     /// // A page file with pages 1 to 3, and a pool of 2 frames in front of it.
-    /// let pool = BufPool::new(file, 2, Box::new(Clock::new(2)), Box::new(NoLog));
+    /// let pool = BufPool::new(file, 2, Clock::new, Box::new(NoLog));
     /// let one = PageNo::new(1).unwrap();
     /// let mut page = pool.fetch_mut(one).unwrap();
     /// page.set_lsn(9);

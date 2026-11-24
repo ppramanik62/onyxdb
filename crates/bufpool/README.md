@@ -40,7 +40,7 @@ use vfs::Mem;
 
 let mem = Mem::new();
 let file = PageFile::create(&mem, "db.pf", 4096).unwrap();
-let pool = BufPool::new(file, 8, Box::new(Clock::new(8)), Box::new(NoLog));
+let pool = BufPool::new(file, 8, Clock::new, Box::new(NoLog));
 
 // The freelist runs through the pool, so the new page and the header
 // change in memory first.

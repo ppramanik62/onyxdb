@@ -30,7 +30,7 @@ use std::{error, fmt, result};
 /// use bufpool::Error;
 ///
 /// // A file with only the header page, and a pool in front of it.
-/// let pool = BufPool::new(file, 2, Box::new(Clock::new(2)), Box::new(NoLog));
+/// let pool = BufPool::new(file, 2, Clock::new, Box::new(NoLog));
 /// // Page 1 isn't in the file, so loading it fails in the page file.
 /// let Err(e) = pool.fetch(PageNo::new(1).unwrap()) else { panic!() };
 /// assert!(matches!(e, Error::PageFile(_)));

@@ -65,3 +65,22 @@ fn a_damaged_page_is_caught_on_load() {
     // works.
     assert_eq!(pool.fetch(no(3)).unwrap().u32_at(STAMP), 3);
 }
+
+#[test]
+fn the_pool_makes_its_policy_for_its_own_frames() {
+    let mem = Mem::new();
+    let mut asked = None;
+    let pool = bufpool::BufPool::new(
+        common::file_with(&mem, 10),
+        3,
+        |frames| {
+            asked = Some(frames);
+            bufpool::Clock::new(frames)
+        },
+        Box::new(bufpool::NoLog),
+    );
+    assert_eq!(asked, Some(3));
+    for n in 1..=10 {
+        pool.fetch(no(n)).unwrap();
+    }
+}

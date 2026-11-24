@@ -75,7 +75,7 @@ impl BufPool {
     /// #     file.write(n, &mut file.new_page()).unwrap();
     /// # }
     /// // A page file with pages 1 to 3, and a pool of 2 frames in front of it.
-    /// let pool = BufPool::new(file, 2, Box::new(Clock::new(2)), Box::new(NoLog));
+    /// let pool = BufPool::new(file, 2, Clock::new, Box::new(NoLog));
     /// // Page 0, the header, and pages 1 to 3.
     /// assert_eq!(pool.header().page_count, 4);
     ///
@@ -119,7 +119,7 @@ impl BufPool {
     /// #     file.write(n, &mut file.new_page()).unwrap();
     /// # }
     /// // A page file with pages 1 to 3, and a pool of 2 frames in front of it.
-    /// let pool = BufPool::new(file, 2, Box::new(Clock::new(2)), Box::new(NoLog));
+    /// let pool = BufPool::new(file, 2, Clock::new, Box::new(NoLog));
     /// pool.header_mut().user[0] = 7;
     /// assert_eq!(pool.header().user[0], 7);
     /// ```
@@ -193,7 +193,7 @@ impl BufPool {
     /// #     file.write(n, &mut file.new_page()).unwrap();
     /// # }
     /// // A page file with pages 1 to 3, and a pool of 2 frames in front of it.
-    /// let pool = BufPool::new(file, 2, Box::new(Clock::new(2)), Box::new(NoLog));
+    /// let pool = BufPool::new(file, 2, Clock::new, Box::new(NoLog));
     /// let one = PageNo::new(1).unwrap();
     /// pool.fetch_mut(one).unwrap().set_lsn(9);
     /// pool.flush().unwrap();
