@@ -34,7 +34,7 @@
 //! - `batch`: [`Batch`], the only way to write, and its encoding in bytes.
 //! - `kv`: the [`Kv`] trait and the promises an engine makes.
 //! - `model`: [`Model`], the model engine.
-//! - `suite`: the tests that any engine can run.
+//! - [`suite`]: the tests that any engine can run.
 
 // Every public item must say what it is. The compiler checks this for us.
 #![warn(missing_docs)]
@@ -62,3 +62,5 @@ pub use batch::{Batch, Op};
 pub use error::{Error, Result};
 pub use kv::{Iter, Kv, empty_range};
 pub use model::Model;
+
+pub mod suite;

@@ -40,6 +40,12 @@ some prefix of the applied batches, which includes every batch applied with
 | `empty_range` | true when a pair of bounds holds no keys | an engine calls it at the start of `scan` |
 | `MAX_KEY`, `MAX_VALUE` | 512 bytes and 1 MiB | the limits a batch checks |
 | `Error`, `Result` | `KeyTooLong`, `ValueTooLong`, `Vfs`, `Corrupt`, `Stopped` | every call that can fail returns them |
+| `Model` | the model engine: a `BTreeMap` in memory and a `wal` log of batches. `create`, `open` | an engine to trust, for tests of the code above storage |
+| `suite::Engine` | how the suite creates and opens an engine on a `vfs::Mem` | to run the suite on a new engine |
+| `suite::Step` | one step of a test: get, scan, scan with writes during it, batch, reopen | to write or read a test by hand |
+| `suite::generate`, `run`, `threads` | random steps from a seed; run steps against a `BTreeMap`; writers in many threads | to check an engine against the contract |
+| `suite::shrink`, `check`, `Failure` | cut a failing test down to the steps that matter; run many seeds and shrink the first failure | to read a failure |
+| `suite::crashes`, `check_crashes` | crash the engine after every change to its files, and fail every sync once | to check the crash promise |
 
 ## Use
 
@@ -121,8 +127,10 @@ delete  0      1        3          3+k
 
 ## Known gaps
 
-- There is no engine in the crate yet: no model engine and no shared test suite
-  that checks an engine against the contract.
+- `Model` never removes old log records, so opening it replays every batch it
+  ever applied. Fine for tests, wrong for real data.
+- The crash checks are slow: every change to the files is one power cut, crashed
+  with several seeds, so tests use short step lists.
 - `lib.rs` keeps its own docs, so this README is not yet the crate's front page
   in `cargo doc`, and the example above does not run as a doctest.
 
@@ -135,5 +143,9 @@ cargo test -p kv
 | Test | What it checks |
 |---|---|
 | `tests/batch.rs` | encode and decode round-trip on random batches, bad bytes give `Corrupt` with the right message, the limits are exact, empty ranges, and random bytes never make `decode` panic |
+| `tests/model.rs` | each promise of the contract on `Model`, one test per promise |
+| `tests/suite.rs` | the model passes random steps and threads, and the generator makes every kind of step, empty and backward scans included |
+| `tests/shrink.rs` | an engine whose scan skips its last key fails, and its failure shrinks to a few steps |
+| `tests/crash.rs` | the model survives a crash at every write; an engine that applies a batch in parts passes without crashes and fails with them |
 
 The references behind this crate are in [engineering-notes](https://github.com/PPRAMANIK62/engineering-notes/blob/main/database-references/README.md#key-value-storage).
