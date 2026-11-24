@@ -192,7 +192,7 @@ impl Kv for Model {
         Ok(())
     }
 
-    fn scan(&self, from: Bound<&[u8]>, to: Bound<&[u8]>) -> Result<Iter<'_>> {
+    fn scan_range(&self, from: Bound<&[u8]>, to: Bound<&[u8]>) -> Result<Iter<'_>> {
         Ok(Box::new(Scan {
             model: self,
             from: from.map(<[u8]>::to_vec),

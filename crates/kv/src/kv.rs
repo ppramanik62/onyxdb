@@ -45,7 +45,7 @@ use crate::{Batch, Result};
 /// use std::collections::BTreeMap;
 /// use std::ops::Bound;
 /// use std::sync::Mutex;
-/// use kv::{Batch, Iter, Kv, Op, Result, empty_range};
+/// use kv::{Batch, Iter, Kv, Op, Result};
 ///
 /// struct Memory(Mutex<BTreeMap<Vec<u8>, Vec<u8>>>);
 ///
@@ -54,10 +54,8 @@ use crate::{Batch, Result};
 ///         Ok(self.0.lock().unwrap().get(key).cloned())
 ///     }
 ///
-///     fn scan(&self, from: Bound<&[u8]>, to: Bound<&[u8]>) -> Result<Iter<'_>> {
-///         if empty_range(from, to) {
-///             return Ok(Box::new(std::iter::empty()));
-///         }
+///     // `scan` handles empty ranges, so `BTreeMap::range` never sees one.
+///     fn scan_range(&self, from: Bound<&[u8]>, to: Bound<&[u8]>) -> Result<Iter<'_>> {
 ///         // Copies the range, so the scan holds no lock.
 ///         let map = self.0.lock().unwrap();
 ///         let items: Vec<_> = map.range::<[u8], _>((from, to)).map(|(k, v)| Ok((k.clone(), v.clone()))).collect();
@@ -105,12 +103,30 @@ pub trait Kv: Send + Sync {
     /// reaches the key, and it holds nothing that stops a write, even a
     /// write from the same thread.
     ///
+    /// Engines implement [`scan_range`](Self::scan_range) and keep this
+    /// method as it is: it answers an empty range itself, so no engine has
+    /// to handle one.
+    ///
     /// # Errors
     ///
     /// Any error the engine had while it started the scan. An error while
     /// the scan runs comes back as an `Err` item, and the scan ends after
     /// it.
-    fn scan(&self, from: Bound<&[u8]>, to: Bound<&[u8]>) -> Result<Iter<'_>>;
+    fn scan(&self, from: Bound<&[u8]>, to: Bound<&[u8]>) -> Result<Iter<'_>> {
+        if empty_range(from, to) {
+            return Ok(Box::new(std::iter::empty()));
+        }
+        self.scan_range(from, to)
+    }
+
+    /// The engine's part of [`scan`](Self::scan): the same promises, for a
+    /// range that can hold at least one key. `scan` never calls it with an
+    /// empty range.
+    ///
+    /// # Errors
+    ///
+    /// The same as [`scan`](Self::scan).
+    fn scan_range(&self, from: Bound<&[u8]>, to: Bound<&[u8]>) -> Result<Iter<'_>>;
 
     /// Applies every op in `batch`, in order, whole or not at all. With
     /// `sync`, it returns only once this batch and every batch applied
@@ -138,9 +154,10 @@ pub type Iter<'a> = Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>)>> + 'a>;
 /// is after its end, or its start equals its end and either bound excludes
 /// it.
 ///
-/// A scan of such a range must return nothing. `BTreeMap::range` panics on
-/// the first case, and on the second when both bounds exclude the key, so
-/// an engine checks this first.
+/// A scan of such a range returns nothing, and [`Kv::scan`] uses this to
+/// answer it before the engine sees it. An engine that keeps its own
+/// ranges in a `BTreeMap` also needs it: `BTreeMap::range` panics on the
+/// first case, and on the second when both bounds exclude the key.
 ///
 /// # Examples
 ///

@@ -32,8 +32,8 @@ impl Kv for SkipLast {
         self.0.get(key)
     }
 
-    fn scan(&self, from: Bound<&[u8]>, to: Bound<&[u8]>) -> Result<Iter<'_>> {
-        let mut items: Vec<_> = self.0.scan(from, to)?.collect();
+    fn scan_range(&self, from: Bound<&[u8]>, to: Bound<&[u8]>) -> Result<Iter<'_>> {
+        let mut items: Vec<_> = self.0.scan_range(from, to)?.collect();
         items.pop();
         Ok(Box::new(items.into_iter()))
     }
@@ -68,8 +68,8 @@ impl Kv for Split {
         self.0.get(key)
     }
 
-    fn scan(&self, from: Bound<&[u8]>, to: Bound<&[u8]>) -> Result<Iter<'_>> {
-        self.0.scan(from, to)
+    fn scan_range(&self, from: Bound<&[u8]>, to: Bound<&[u8]>) -> Result<Iter<'_>> {
+        self.0.scan_range(from, to)
     }
 
     fn apply(&self, batch: Batch, sync: bool) -> Result<()> {

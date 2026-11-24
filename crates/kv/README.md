@@ -34,11 +34,11 @@ some prefix of the applied batches, which includes every batch applied with
 
 | Item | What it is | When to use it |
 |---|---|---|
-| `Kv` | the trait: `get`, `scan`, `apply` | to read and write any engine, or to write a new engine |
+| `Kv` | the trait: `get`, `scan`, `apply`. An engine implements `scan_range`, which `scan` calls for every range that can hold a key | to read and write any engine, or to write a new engine |
 | `Batch` | a list of ops: `new`, `put`, `delete`, `ops`, `len`, `is_empty`, `encode`, `decode` | the only way to write. A single put is a batch with one op |
 | `Op` | `Put(key, value)` or `Delete(key)` | an engine reads them from `Batch::ops` |
 | `Iter` | the boxed iterator that `scan` returns, of `(key, value)` pairs | to read a range in order |
-| `empty_range` | true when a pair of bounds holds no keys | an engine calls it at the start of `scan` |
+| `empty_range` | true when a pair of bounds holds no keys | `scan` uses it, so engines need it only for their own ranges, such as a `BTreeMap` |
 | `MAX_KEY`, `MAX_VALUE` | 512 bytes and 1 MiB | the limits a batch checks |
 | `Error`, `Result` | `KeyTooLong`, `ValueTooLong`, `Vfs`, `Corrupt`, `Stopped` | every call that can fail returns them |
 | `Model` | the model engine: a `BTreeMap` in memory and a `wal` log of batches. `create`, `open` | an engine to trust, for tests of the code above storage |

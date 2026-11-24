@@ -117,3 +117,50 @@ fn an_empty_batch_syncs() {
     let kv = Model::open(Arc::new(mem), "kv").unwrap();
     assert_eq!(kv.get(b"a").unwrap(), Some(b"1".to_vec()));
 }
+
+/// An engine that refuses empty ranges, to show that `scan` never passes one
+/// to `scan_range`.
+struct RefusesEmpty(kv::Model);
+
+impl kv::Kv for RefusesEmpty {
+    fn get(&self, key: &[u8]) -> kv::Result<Option<Vec<u8>>> {
+        self.0.get(key)
+    }
+
+    fn scan_range(
+        &self,
+        from: std::ops::Bound<&[u8]>,
+        to: std::ops::Bound<&[u8]>,
+    ) -> kv::Result<kv::Iter<'_>> {
+        assert!(!kv::empty_range(from, to), "scan passed an empty range");
+        self.0.scan_range(from, to)
+    }
+
+    fn apply(&self, batch: kv::Batch, sync: bool) -> kv::Result<()> {
+        self.0.apply(batch, sync)
+    }
+}
+
+#[test]
+fn scan_never_passes_an_empty_range_to_the_engine() {
+    use std::ops::Bound::{Excluded, Included};
+    let engine =
+        RefusesEmpty(kv::Model::create(std::sync::Arc::new(vfs::Mem::new()), "kv").unwrap());
+    let mut batch = kv::Batch::new();
+    batch.put("a", "1").unwrap();
+    engine.apply(batch, false).unwrap();
+    for (from, to) in [
+        (Included(&b"b"[..]), Included(&b"a"[..])),
+        (Included(&b"a"[..]), Excluded(&b"a"[..])),
+        (Excluded(&b"a"[..]), Excluded(&b"a"[..])),
+    ] {
+        assert_eq!(engine.scan(from, to).unwrap().count(), 0);
+    }
+    assert_eq!(
+        engine
+            .scan(Included(&b"a"[..]), Included(&b"a"[..]))
+            .unwrap()
+            .count(),
+        1
+    );
+}
