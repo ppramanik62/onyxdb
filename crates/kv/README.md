@@ -148,4 +148,7 @@ cargo test -p kv
 | `tests/shrink.rs` | an engine whose scan skips its last key fails, and its failure shrinks to a few steps |
 | `tests/crash.rs` | the model survives a crash at every write; an engine that applies a batch in parts passes without crashes and fails with them |
 
+`cargo run -p kv --example order` prints 1,000 random keys in the model's scan
+order, so the order can be compared with `sqlite3` sorting the same BLOBs.
+
 The references behind this crate are in [engineering-notes](https://github.com/PPRAMANIK62/engineering-notes/blob/main/database-references/README.md#key-value-storage).
