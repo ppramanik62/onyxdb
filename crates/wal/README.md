@@ -157,9 +157,9 @@ both the LSN of the last whole record.
 ```text
 cargo test -p wal
 cargo bench -p wal
-cargo run --release -p wal --example layout   the fragments of LevelDB's example
-cargo run --release -p wal --example torn     100 crashes of the same log
-cargo run --release -p wal --example hole     a failed sync, in a plain file and in the log
+cargo run --release -p wal --example layout     the fragments of LevelDB's example
+cargo run --release -p wal --example torn_log   100 crashes of the same log
+cargo run --release -p wal --example hole       a failed sync, in a plain file and in the log
 ```
 
 | Test | What it checks |

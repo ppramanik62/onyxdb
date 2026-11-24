@@ -1,6 +1,6 @@
 //! What 100 crashes leave of records that were not synced.
 //!
-//!     cargo run --example torn
+//!     cargo run --example torn_log
 
 use std::{collections::BTreeMap, sync::Arc};
 
