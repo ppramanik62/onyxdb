@@ -255,6 +255,7 @@ impl PageFile {
         };
         file.save_header()?;
         file.sync()?;
+        // Without the directory sync, a crash just after create can lose the file's name.
         vfs.sync_dir(path.parent().unwrap_or(Path::new("")))?;
         Ok(file)
     }
