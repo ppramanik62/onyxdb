@@ -11,7 +11,7 @@ A power cut that `vfs::Mem` simulates: synced data stays, and unsynced writes ar
 _Avoid_: failure, kill
 
 **Torn write**:
-A write that a crash left in part: some 512-byte sectors new, some old.
+A write that a crash left in part: some sectors new, some old.
 _Avoid_: partial write
 
 ### Pages
@@ -21,7 +21,7 @@ A fixed-size piece of a page file, found by its page number, with a kind, an LSN
 _Avoid_: block (a block belongs to the log), sector
 
 **Header**:
-Page 0 of a page file: the page size, the page count, the freelist head and 32 bytes for the code above.
+Page 0 of a page file, which describes the whole file.
 _Avoid_: superblock, meta page
 
 **Slotted page**:
@@ -32,7 +32,7 @@ One run of bytes in a slotted page, found through its slot.
 _Avoid_: cell, tuple, record (a record belongs to the log)
 
 **Slot**:
-The 4-byte entry at the front of a slotted page that gives an item's offset and length. Slot order is item order.
+The entry at the front of a slotted page that points at one item. Slot order is item order.
 
 **Overflow chain**:
 A value too big for one page, split across linked overflow pages.
@@ -76,10 +76,10 @@ One entry appended to the log, cut into fragments when it spans blocks.
 _Avoid_: entry, message
 
 **Fragment**:
-The part of a record inside one block, with its own CRC, length and kind.
+The part of a record that lies inside one block.
 
 **Block**:
-A 32 KiB unit of the log. A reader can always start at a block boundary.
+A fixed-size unit of the log. A reader can always start at a block boundary.
 _Avoid_: page
 
 **Segment**:
@@ -116,6 +116,48 @@ The shared tests in `kv::suite` that every engine must pass.
 
 **Step**:
 One operation of a suite test: a get, a scan, a batch, or opening the engine again.
+
+### Planned layers
+
+These terms come from the ADRs for the layers that are not built yet.
+
+**Checkpoint**:
+A saved log position where replay can start. The segments before it can be deleted.
+
+**Group commit**:
+One log sync shared by every writer that waits at the same moment.
+
+**Memtable**:
+The sorted, in-memory part of an LSM tree that takes new writes.
+
+**SSTable**:
+A sorted, immutable file of an LSM tree.
+_Avoid_: segment (a segment belongs to the log)
+
+**Tombstone**:
+A record in an LSM tree that says a key was deleted.
+
+**Snapshot**:
+The point in commit order that a transaction reads at: it sees every version committed before it, and none after.
+
+**Commit timestamp**:
+The number a transaction's versions carry, from a counter saved to disk.
+
+**Version**:
+One value of a key, written by one transaction.
+
+**Intent**:
+A version that its transaction has not committed yet.
+
+**Transaction record**:
+The record that says whether a transaction with intents committed.
+
+**Lock**:
+A claim on a table, row or range that a transaction holds until it commits.
+_Avoid_: latch (a latch protects bytes in memory for a short time)
+
+**Session**:
+One client connection and its transaction state.
 
 ### The project
 
