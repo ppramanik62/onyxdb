@@ -2,7 +2,9 @@
 
 onyxdb is a SQL database, built to learn how databases work inside. It does what a real database must do: it stores data in its own format, survives crashes, caches pages, keeps indexes, runs SQL, isolates transactions, and serves many clients. Where there is a choice, it takes the simplest design that is still correct. Speed is the second goal, after correctness.
 
-This file is the final design. The database is built in milestones, and each milestone is a version that runs (see [Milestones](#milestones)). `vfs`, `pagefile` and `bufpool` are done, and so is part 1 of `wal`. When a crate is built, its README describes how its code works.
+This file is the final design. The database is built in milestones, and each milestone is a version that runs (see [Milestones](#milestones)). `vfs`, `pagefile`, `bufpool` and `kv` are done, and so is part 1 of `wal`. When a crate is built, its README describes how its code works.
+
+Every design decision is recorded here before its code: what was chosen, why, and what it costs.
 
 ## Principles
 

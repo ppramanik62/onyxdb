@@ -1,44 +1,106 @@
 # onyxdb
 
-A SQL database written from scratch in Rust, with the standard library only. It
-has SQLite-like SQL, crash-safe storage, transactions, and many clients over its
-own protocol.
+A SQL database built from scratch in Rust, with the standard library only, to
+understand how databases work inside. The reading behind each part is in
+[engineering-notes](https://github.com/PPRAMANIK62/engineering-notes).
 
-The references behind each layer are in [engineering-notes](https://github.com/PPRAMANIK62/engineering-notes).
+**Early work in progress.** The storage foundation is done. The first version
+you can run, a crash-safe key-value store (M1), is next.
+
+## What works today
+
+- **Pages on disk,** fixed-size and checksummed, with a freelist and overflow
+  chains, cached in a buffer pool.
+- **A write-ahead log** that keeps every synced record after a crash, and stops
+  after a failed `fsync` instead of trusting it.
+- **One key-value interface** for every storage engine, and a model engine that
+  survives crashes.
+- **Every layer tested against a simple model,** and crashed after every write
+  it makes, on a file system in memory.
+
+This runs today: write two keys, change one without a sync, crash, and open
+again.
+
+```rust
+use std::sync::Arc;
+use kv::{Batch, Kv, Model};
+use vfs::Mem;
+
+let disk = Arc::new(Mem::new());
+let db = Model::create(disk.clone(), "kv").unwrap();
+
+// Applied with sync: on disk when apply returns.
+let mut batch = Batch::new();
+batch.put("apple", "red").unwrap();
+batch.put("pear", "green").unwrap();
+db.apply(batch, true).unwrap();
+
+// Not synced, so a crash may lose it.
+let mut batch = Batch::new();
+batch.delete("pear").unwrap();
+db.apply(batch, false).unwrap();
+drop(db);
+
+// Cut the power. The seed picks which unsynced writes survive.
+disk.crash(1);
+
+let db = Model::open(disk, "kv").unwrap();
+assert_eq!(db.get(b"apple").unwrap(), Some(b"red".to_vec()));
+// "green" after crash(1), where the delete was lost; None after crash(2).
+println!("{:?}", db.get(b"pear").unwrap());
+```
+
+## The layers
+
+The whole design, and how much of it exists.
+[ARCHITECTURE.md](ARCHITECTURE.md) explains each layer.
+
+```text
+     client               library + REPL                      planned
+        │  wire           messages both sides share           planned
+     server               sessions, login, limits             planned
+        │
+       sql                parse → plan → execute              planned
+        │
+      mvcc                transactions, locks, versions       planned
+        │
+       kv                 one ordered key-value interface     done
+   ┌────┼─────────────┐
+ model btree         lsm  engines: model done, btree next, lsm planned
+        │             │
+     bufpool          │                                       done
+        │             │
+     pagefile        wal  pages; the log                      done; wal part 1 done
+        └──── vfs ────┘   every file operation                done
+```
 
 ## Crates
 
-Each crate has a README with its design, its format and the decisions behind it.
-[ARCHITECTURE.md](ARCHITECTURE.md) shows how the crates fit together.
-
 | Crate | What it is | State |
 |---|---|---|
-| [`vfs`](crates/vfs) | file I/O behind a trait: the real disk, or a file system in memory that can crash, tear writes and fail `fsync`. Also file locks | done |
-| [`pagefile`](crates/pagefile) | a file of fixed-size, checksummed pages: slotted pages, a freelist and overflow chains | done |
-| [`bufpool`](crates/bufpool) | a buffer pool: frames, eviction, the write-ahead rule, latches | done |
-| [`wal`](crates/wal) | a write-ahead log: records in blocks, segments, sync, replay, dropping old segments. Group commit and checkpoints come later | part 1 done |
-| [`kv`](crates/kv) | the ordered key-value trait, a model engine on `BTreeMap` and the log, and a shared test suite | in progress |
-| `btree` | a B+tree engine, crash-safe through page images in the log | planned |
-| `lsm` | a log-structured merge tree engine | planned |
-| `mvcc` | transactions: snapshots, a lock manager, deadlocks, serializable isolation with phantoms | planned |
-| `sql` | parser, catalog, schema locks, prepared statements, planner and executor | planned |
-| `wire` | the client-server protocol | planned |
-| `server` | sessions over TCP, many clients at the same time | planned |
-| `client` | a client library and a REPL | planned |
-| `onyxdb` | the binary: owns the data directory, recovers and serves clients. Also integrity checks and backups | planned |
+| [`vfs`](crates/vfs) | every file operation behind a trait, and a file system in memory that can crash | done |
+| [`pagefile`](crates/pagefile) | a file of fixed-size, checksummed pages | done |
+| [`bufpool`](crates/bufpool) | a buffer pool that caches pages | done |
+| [`wal`](crates/wal) | a write-ahead log | part 1 done |
+| [`kv`](crates/kv) | the key-value interface, a model engine, and a test suite for any engine | done |
 
-The database is built in milestones, and each milestone is a version that runs.
-[ARCHITECTURE.md](ARCHITECTURE.md#milestones) lists them.
+Planned: `btree`, `lsm`, `mvcc`, `sql`, `wire`, `server`, `client` and the
+`onyxdb` binary.
 
-| Milestone | What works | State |
+## Milestones
+
+Each milestone is a version that runs. When one is done, it gets a short demo
+here.
+
+| Milestone | What it adds | State |
 |---|---|---|
-| M0 | reading and writing cached, checksummed pages | done |
-| M1 `v0.1` | put, get, delete and scan keys in a store that survives `kill -9` | in progress |
+| M0 | pages on disk, cached and checksummed | done |
+| M1 `v0.1` | a key-value store on a B-tree that survives `kill -9` | in progress |
 | M2 `v0.2` | SQL in a shell | planned |
-| M3 `v0.3` | connecting over the network | planned |
+| M3 `v0.3` | clients over the network | planned |
 | M4 `v0.4` | many clients at the same time | planned |
-| M5 `v0.5` | indexes, joins and optimized queries | planned |
-| M6 `v1.0` | a choice of two engines, with all of it proven | planned |
+| M5 `v0.5` | indexes, joins and an optimizer | planned |
+| M6 `v1.0` | a second engine, and the whole design proven | planned |
 
 ## Build and test
 
@@ -51,16 +113,6 @@ cargo doc --open
 
 `rust-toolchain.toml` pins the compiler version. CI runs the same checks on
 every push.
-
-## Rules
-
-- Standard library only. A crate depends only on the crates below it.
-- No `unsafe`, and all file I/O goes through `vfs`.
-- Dependencies point down. `sql` can use `mvcc`, but `mvcc` never uses `sql`.
-  When a lower crate needs something from a crate above it, the lower crate
-  defines a trait and the crate above implements it.
-- Each crate's README describes the code as it is now, and it changes in the
-  same commit as the code.
 
 ## License
 
