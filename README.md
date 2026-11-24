@@ -7,6 +7,15 @@ understand how databases work inside. The reading behind each part is in
 **Early work in progress.** The storage foundation is done. The first version
 you can run, a crash-safe key-value store (M1), is next.
 
+## The goal
+
+onyxdb v1.0 does what a real database must do. It stores data in its own
+format, survives crashes, caches pages, keeps indexes, runs SQL, isolates
+transactions and serves many clients over its own protocol. It has two storage
+engines, a B-tree and an LSM tree, behind one interface. Where there is a
+choice, it takes the simplest design that is still correct, and speed comes
+second. Replication and sharding are not part of it.
+
 ## What works today
 
 - **Pages on disk,** fixed-size and checksummed, with a freelist and overflow
@@ -52,8 +61,8 @@ println!("{:?}", db.get(b"pear").unwrap());
 
 ## The layers
 
-The whole design, and how much of it exists.
-[ARCHITECTURE.md](ARCHITECTURE.md) explains each layer.
+The whole design, and how much of it exists. The decisions are in
+[docs/adr](docs/adr), and the terms in [CONTEXT.md](CONTEXT.md).
 
 ```text
      client               library + REPL                      planned
@@ -83,24 +92,49 @@ The whole design, and how much of it exists.
 | [`bufpool`](crates/bufpool) | a buffer pool that caches pages | done |
 | [`wal`](crates/wal) | a write-ahead log | part 1 done |
 | [`kv`](crates/kv) | the key-value interface, a model engine, and a test suite for any engine | done |
+| `btree` | a B+tree engine | planned |
+| `lsm` | a log-structured merge tree engine | planned |
+| `mvcc` | transactions: snapshots, locks, isolation levels | planned |
+| `sql` | parser, catalog, planner and executor | planned |
+| `wire` | the messages between client and server | planned |
+| `server` | sessions over TCP, many clients at the same time | planned |
+| `client` | a client library and a shell | planned |
+| `onyxdb` | the binary: owns the data directory, recovers, and serves clients | planned |
 
-Planned: `btree`, `lsm`, `mvcc`, `sql`, `wire`, `server`, `client` and the
-`onyxdb` binary.
+```mermaid
+flowchart LR
+  vfs --> pagefile --> bufpool
+  vfs --> wal
+  vfs --> kv
+  kv --> mvcc --> sql --> server
+  wire --> server
+  wire --> client
+  bufpool --> btree
+  wal --> btree
+  kv --> btree
+  wal --> kv
+  wal --> lsm
+  kv --> lsm
+  server --> onyxdb
+  client --> onyxdb
+  btree --> onyxdb
+  lsm --> onyxdb
+```
 
 ## Milestones
 
 Each milestone is a version that runs. When one is done, it gets a short demo
 here.
 
-| Milestone | What it adds | State |
-|---|---|---|
-| M0 | pages on disk, cached and checksummed | done |
-| M1 `v0.1` | a key-value store on a B-tree that survives `kill -9` | in progress |
-| M2 `v0.2` | SQL in a shell | planned |
-| M3 `v0.3` | clients over the network | planned |
-| M4 `v0.4` | many clients at the same time | planned |
-| M5 `v0.5` | indexes, joins and an optimizer | planned |
-| M6 `v1.0` | a second engine, and the whole design proven | planned |
+| Milestone | What it adds | Parts built | State |
+|---|---|---|---|
+| M0 | pages on disk, cached and checksummed | `vfs`, `pagefile`, `bufpool` | done |
+| M1 `v0.1` | a key-value store on a B-tree that survives `kill -9`, with a command line | `wal` (records, sync, replay), `kv`, `btree`, `onyxdb` (data directory, recovery) | in progress |
+| M2 `v0.2` | SQL in a shell, one table per query, transactions taking turns | `mvcc` (versions, snapshots), `sql`, `client` (the shell) | planned |
+| M3 `v0.3` | the shell and other programs over the network | `wire`, `server`, `client` (the library) | planned |
+| M4 `v0.4` | many clients at the same time, every isolation level correct | `wal` (group commit, checkpoints), `btree` (concurrency), `mvcc` (locks, isolation levels), `server` (thread pool) | planned |
+| M5 `v0.5` | indexes, joins, queries bigger than memory, an optimizer | `sql` (indexes, joins, spilling, statistics), `wire` and `client` (prepared statements) | planned |
+| M6 `v1.0` | a second engine, and the whole design proven | `lsm`, `onyxdb` (engine choice, integrity check, backup) | planned |
 
 ## Build and test
 

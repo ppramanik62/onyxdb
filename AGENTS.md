@@ -8,8 +8,8 @@ Here's how I want you to work on it.
 - **Design first, with me.** Don't write code before we've agreed on the design.
   Every real choice is mine: a format, a trade-off, a promise to the layer
   above. Lay out the options and what each one costs, I decide, and the decision
-  goes into [ARCHITECTURE.md](ARCHITECTURE.md) before the code: what we chose,
-  why, and what it costs.
+  becomes an ADR in [docs/adr](docs/adr) before the code. New terms go into
+  [CONTEXT.md](CONTEXT.md).
 - **Tests first.** Write the model test, the crash test and the fuzz test before
   the code they check.
 - **Walk me through every change:** the design it follows, the tests that prove
@@ -38,7 +38,7 @@ Here's how I want you to work on it.
   it was doing only when the lower error doesn't already say it.
 - **No `unsafe`.**
 - When you add a crate, or its place among the others changes, update
-  `README.md` and `ARCHITECTURE.md` in the same commit.
+  `README.md` in the same commit.
 
 ## Checks
 
@@ -74,19 +74,14 @@ cargo clippy --all-targets -- -D warnings
 ## Crate READMEs
 
 Every crate has a `README.md` that describes the code as it is now: what the
-crate is, a short example, its format, its decisions and its known gaps. Change
+crate is, a short example, its format and its known gaps. Change
 it in the same commit as the code. `lib.rs` starts with
 `#![doc = include_str!("../README.md")]`, so the README is the crate's front
 page in `cargo doc` and its example runs as a doctest. A crate's state goes only
 in the crate table in the top `README.md`.
 
-Each decision is one entry:
-
-```text
-- **A CRC-32C in the last 4 bytes of every page.**
-  Why: it catches flipped bits and torn writes on every read.
-  Cost: 4 bytes per page, and it can't catch a lost write.
-```
+The decisions live in `docs/adr/`, not in the READMEs. A decision that does
+not need an ADR is explained by a comment where the code makes it.
 
 Keep READMEs short: tables, small diagrams, no walls of text. Each one links
 back to its topic in
